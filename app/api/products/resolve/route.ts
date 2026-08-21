@@ -1,5 +1,6 @@
 import {
   findLisSkinsItem,
+  getLisSkinsSlug,
   parseCbrUsdRate,
   rubPriceFromUsd,
   type LisSkinsExportItem,
@@ -60,6 +61,7 @@ export async function POST(request: Request) {
   }
 
   try {
+    getLisSkinsSlug(body.url);
     const item = findLisSkinsItem(await getCatalogue(), body.url);
     if (!item || !Number.isFinite(item.price) || item.price <= 0) {
       return Response.json({ error: "Товар не найден в актуальном каталоге LIS-SKINS" }, { status: 404 });
@@ -82,4 +84,3 @@ export async function POST(request: Request) {
     return Response.json({ error: message }, { status });
   }
 }
-

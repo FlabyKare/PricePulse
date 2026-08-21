@@ -1,7 +1,8 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { isLisSkinsUrl } from "@/lib/lis-skins";
 
 type Offer = {
   id: string;
@@ -27,6 +28,17 @@ type Product = {
   favorite: boolean;
   target?: number;
   offers?: Offer[];
+};
+
+type ResolvedLisProduct = {
+  source: "LIS-SKINS";
+  name: string;
+  url: string;
+  priceUsd: number;
+  priceRub: number;
+  exchangeRate: number;
+  count: number;
+  approximate: boolean;
 };
 
 type Collection = {
@@ -174,6 +186,42 @@ function normalizeProduct(product: Product): Product {
   };
 }
 
+async function resolveLisProduct(url: string) {
+  const response = await fetch("/api/products/resolve", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  const result = await response.json() as ResolvedLisProduct & { error?: string };
+  if (!response.ok) throw new Error(result.error || "Не удалось получить цену LIS-SKINS");
+  return result;
+}
+
+function withResolvedLisPrice(product: Product, resolved: ResolvedLisProduct): Product {
+  const placeholder = product.price === 1790 && product.oldPrice === 1790;
+  const change = placeholder || product.price <= 0
+    ? 0
+    : Math.round(((resolved.priceRub - product.price) / product.price) * 1000) / 10;
+  const lisOffer: Offer = {
+    id: `${product.id}-lis-skins`,
+    store: "LIS-SKINS",
+    price: resolved.priceRub,
+    url: resolved.url,
+    note: `Официальный каталог · ${resolved.count} ${resolved.count === 1 ? "предложение" : "предложения"}`,
+  };
+
+  return {
+    ...product,
+    name: resolved.name,
+    url: resolved.url,
+    price: resolved.priceRub,
+    oldPrice: placeholder ? resolved.priceRub : product.price,
+    change,
+    nextCheck: "проверено только что",
+    offers: [lisOffer, ...(product.offers ?? []).filter((offer) => offer.store !== "LIS-SKINS")],
+  };
+}
+
 function haptic(style: "light" | "medium" = "light") {
   const telegram = (window as TelegramWindow).Telegram?.WebApp;
   telegram?.HapticFeedback?.impactOccurred(style);
@@ -193,6 +241,7 @@ export default function Home() {
   const [selected, setSelected] = useState<Product | null>(null);
   const [toast, setToast] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const automaticRefreshStarted = useRef(false);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("pricepulse-products");
@@ -241,6 +290,28 @@ export default function Home() {
   useEffect(() => {
     if (loaded) window.localStorage.setItem("pricepulse-products", JSON.stringify(products));
   }, [products, loaded]);
+
+  useEffect(() => {
+    if (!loaded || automaticRefreshStarted.current) return;
+    automaticRefreshStarted.current = true;
+    const lisProducts = products.filter((product) => isLisSkinsUrl(product.url));
+    if (!lisProducts.length) return;
+
+    Promise.allSettled(lisProducts.map(async (product) => ({
+      id: product.id,
+      resolved: await resolveLisProduct(product.url),
+    }))).then((results) => {
+      const updates = new Map<number, ResolvedLisProduct>();
+      results.forEach((result) => {
+        if (result.status === "fulfilled") updates.set(result.value.id, result.value.resolved);
+      });
+      if (!updates.size) return;
+      setProducts((current) => current.map((product) => {
+        const resolved = updates.get(product.id);
+        return resolved ? withResolvedLisPrice(product, resolved) : product;
+      }));
+    });
+  }, [loaded, products]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -311,17 +382,25 @@ export default function Home() {
     haptic("medium");
   }
 
-  function checkPrice(id: number) {
-    setProducts((current) =>
-      current.map((product) =>
-        product.id === id ? { ...product, nextCheck: `через ${product.period} ч` } : product,
-      ),
-    );
-    setToast("Цена актуальна — проверено только что");
-    haptic("medium");
+  async function checkPrice(id: number) {
+    const product = products.find((item) => item.id === id);
+    if (!product) return;
+    if (!isLisSkinsUrl(product.url)) {
+      setToast("Автоматическая проверка пока доступна для LIS-SKINS");
+      return;
+    }
+    setToast("Проверяем цену в каталоге LIS-SKINS…");
+    try {
+      const resolved = await resolveLisProduct(product.url);
+      setProducts((current) => current.map((item) => item.id === id ? withResolvedLisPrice(item, resolved) : item));
+      setToast(`Цена обновлена: ${formatPrice(resolved.priceRub)}`);
+      haptic("medium");
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Не удалось проверить цену");
+    }
   }
 
-  function addOffer(productId: number, url: string) {
+  async function addOffer(productId: number, url: string) {
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -329,23 +408,29 @@ export default function Home() {
       setToast("Нужна полная ссылка на магазин");
       return;
     }
-    setProducts((current) => current.map((product) => {
-      if (product.id !== productId) return product;
-      const seed = Array.from(parsed.hostname).reduce((sum, letter) => sum + letter.charCodeAt(0), 0);
-      const estimatedPrice = Math.max(1, Math.round(product.price * (0.93 + (seed % 13) / 100)));
-      const offer: Offer = {
-        id: `${productId}-${Date.now()}`,
-        store: parsed.hostname.replace(/^www\./, "").split(".")[0].toUpperCase(),
-        price: estimatedPrice,
-        url,
-        note: "Добавлено пользователем",
-      };
-      return { ...product, offers: [...(product.offers ?? []), offer] };
-    }));
-    setToast("Магазин добавлен в сравнение");
-    haptic("medium");
+    if (!isLisSkinsUrl(parsed.href)) {
+      setToast("Автоцена для этого магазина пока не подключена");
+      return;
+    }
+    try {
+      const resolved = await resolveLisProduct(parsed.href);
+      setProducts((current) => current.map((product) => {
+        if (product.id !== productId) return product;
+        const offer: Offer = {
+          id: `${productId}-${Date.now()}`,
+          store: "LIS-SKINS",
+          price: resolved.priceRub,
+          url: resolved.url,
+          note: `Официальный каталог · ${resolved.count} ${resolved.count === 1 ? "предложение" : "предложения"}`,
+        };
+        return { ...product, offers: [...(product.offers ?? []).filter((item) => item.url !== resolved.url), offer] };
+      }));
+      setToast("Цена магазина получена из каталога LIS-SKINS");
+      haptic("medium");
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Не удалось добавить магазин");
+    }
   }
-
   async function shareCollection(collection: Collection) {
     const collectionProducts = products.filter((product) => collection.productIds.includes(product.id));
     const code = window.btoa(encodeURIComponent(JSON.stringify({ collection, products: collectionProducts })));
@@ -539,9 +624,12 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
   const [category, setCategory] = useState("CS2");
   const [customCategory, setCustomCategory] = useState("");
   const [target, setTarget] = useState("");
+  const [manualPrice, setManualPrice] = useState("");
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const lisUrlEntered = isLisSkinsUrl(url);
 
-  function submit(event: FormEvent) {
+  async function submit(event: FormEvent) {
     event.preventDefault();
     let parsedUrl: URL;
     try {
@@ -556,32 +644,51 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
       setError("Минимальный период мониторинга — 1 час");
       return;
     }
-    const pathName = decodeURIComponent(parsedUrl.pathname).split("/").filter(Boolean).pop() ?? "Новый товар";
-    const inferredName = pathName.replace(/[-_]/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 44);
-    const isLis = parsedUrl.hostname.includes("lis-skins");
-    onAdd({
-      id: Date.now(),
-      name: isLis ? inferredName.replace(/Field Tested/i, "(Field-Tested)") : inferredName,
-      source: isLis ? "LIS-SKINS" : parsedUrl.hostname.replace(/^www\./, "").toUpperCase(),
-      url,
-      category: customCategory.trim() || category,
-      price: 1790,
-      oldPrice: 1790,
-      change: 0,
-      period: finalPeriod,
-      nextCheck: "первый чек через 2 мин",
-      art: isLis ? "CS" : "+",
-      artClass: isLis ? "violet" : "blue",
-      favorite: false,
-      target: target ? Number(target) : undefined,
-      offers: [{
-        id: `${Date.now()}-${parsedUrl.hostname}`,
-        store: isLis ? "LIS-SKINS" : parsedUrl.hostname.replace(/^www\./, "").split(".")[0].toUpperCase(),
-        price: 1790,
-        url,
-        note: "Основной магазин",
-      }],
-    });
+    const isLis = isLisSkinsUrl(parsedUrl.href);
+    const enteredPrice = Number(manualPrice.replace(/\s/g, "").replace(",", "."));
+    if (!isLis && (!Number.isFinite(enteredPrice) || enteredPrice <= 0)) {
+      setError("Для этого магазина укажите текущую цену вручную");
+      return;
+    }
+
+    setLoading(true);
+    setError("");
+    try {
+      const resolved = isLis ? await resolveLisProduct(parsedUrl.href) : null;
+      const pathName = decodeURIComponent(parsedUrl.pathname).split("/").filter(Boolean).pop() ?? "Новый товар";
+      const inferredName = pathName.replace(/[-_]/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 60);
+      const currentPrice = resolved?.priceRub ?? enteredPrice;
+      const now = Date.now();
+      const source = resolved?.source ?? parsedUrl.hostname.replace(/^www\./, "").toUpperCase();
+      const productUrl = resolved?.url ?? parsedUrl.href;
+      onAdd({
+        id: now,
+        name: resolved?.name ?? inferredName,
+        source,
+        url: productUrl,
+        category: customCategory.trim() || category,
+        price: currentPrice,
+        oldPrice: currentPrice,
+        change: 0,
+        period: finalPeriod,
+        nextCheck: "первый чек через 2 мин",
+        art: isLis ? "CS" : "+",
+        artClass: isLis ? "violet" : "blue",
+        favorite: false,
+        target: target ? Number(target) : undefined,
+        offers: [{
+          id: `${now}-${parsedUrl.hostname}`,
+          store: source,
+          price: currentPrice,
+          url: productUrl,
+          note: resolved ? `Официальный каталог · ${resolved.count} ${resolved.count === 1 ? "предложение" : "предложения"}` : "Цена указана вручную",
+        }],
+      });
+    } catch (submitError) {
+      setError(submitError instanceof Error ? submitError.message : "Не удалось распознать товар");
+    } finally {
+      setLoading(false);
+    }
   }
 
   return (
@@ -595,7 +702,15 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
         <form onSubmit={submit}>
           <label className="field-label" htmlFor="product-url">Ссылка на товар</label>
           <div className="url-field"><span>↗</span><input id="product-url" type="url" value={url} onChange={(event) => { setUrl(event.target.value); setError(""); }} placeholder="https://lis-skins.com/market/..." /></div>
-          <p className="field-hint">Поддерживаем LIS-SKINS и ссылки на любые магазины</p>
+          <p className="field-hint">LIS-SKINS распознаётся автоматически по официальному каталогу</p>
+
+          {!lisUrlEntered && url && (
+            <div className="manual-price-field">
+              <label className="field-label" htmlFor="manual-price">Текущая цена</label>
+              <div className="price-input"><input id="manual-price" inputMode="decimal" value={manualPrice} onChange={(event) => setManualPrice(event.target.value.replace(/[^\d,.\s]/g, ""))} placeholder="Например, 4 500" /><span>₽</span></div>
+              <p className="field-hint">Для других магазинов цена пока указывается вручную</p>
+            </div>
+          )}
 
           <div className="form-grid">
             <div>
@@ -627,13 +742,12 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
           </div>
           {error && <p className="form-error" role="alert">{error}</p>}
           <div className="smart-note"><span>✦</span><p><b>Умные уведомления</b><br />Сообщим в Telegram, когда цена достигнет цели или резко снизится.</p></div>
-          <button className="primary-button" type="submit">Начать мониторинг <span>→</span></button>
+          <button className="primary-button" type="submit" disabled={loading}>{loading ? "Получаем актуальную цену…" : "Начать мониторинг"} <span>→</span></button>
         </form>
       </section>
     </div>
   );
 }
-
 function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAddOffer }: { product: Product; onClose: () => void; onFavorite: (id: number) => void; onCheck: (id: number) => void; onPeriod: (id: number, period: number) => void; onAddOffer: (id: number, url: string) => void }) {
   const [offerInputOpen, setOfferInputOpen] = useState(false);
   const [offerUrl, setOfferUrl] = useState("");

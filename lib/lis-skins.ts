@@ -44,7 +44,8 @@ export function findLisSkinsItem(items: LisSkinsExportItem[], rawUrl: string) {
 }
 
 export function parseCbrUsdRate(xml: string) {
-  const usdBlock = xml.match(/<Valute\b[^>]*>[\s\S]*?<CharCode>USD<\/CharCode>[\s\S]*?<\/Valute>/i)?.[0];
+  const usdBlock = (xml.match(/<Valute\b[^>]*>[\s\S]*?<\/Valute>/gi) ?? [])
+    .find((block) => /<CharCode>USD<\/CharCode>/i.test(block));
   const value = usdBlock?.match(/<VunitRate>([^<]+)<\/VunitRate>/i)?.[1]
     ?? usdBlock?.match(/<Value>([^<]+)<\/Value>/i)?.[1];
   const rate = Number(value?.replace(",", "."));
@@ -54,4 +55,3 @@ export function parseCbrUsdRate(xml: string) {
 export function rubPriceFromUsd(priceUsd: number, exchangeRate: number) {
   return Math.round(priceUsd * exchangeRate * 100) / 100;
 }
-

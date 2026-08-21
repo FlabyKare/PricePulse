@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://pricepulse-monitor.bokcerkbr.chatgpt.site"),
+  metadataBase: new URL("https://pricepulse-app.bokcerkbr.chatgpt.site"),
   title: "PricePulse — мониторинг цен",
   description: "Telegram Mini App для отслеживания цен, избранного и уведомлений о выгодных покупках.",
   openGraph: {

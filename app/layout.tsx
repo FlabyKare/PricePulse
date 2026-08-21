@@ -2,8 +2,28 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
+  metadataBase: new URL("https://pricepulse-monitor.bokcerkbr.chatgpt.site"),
   title: "PricePulse — мониторинг цен",
   description: "Telegram Mini App для отслеживания цен, избранного и уведомлений о выгодных покупках.",
+  openGraph: {
+    title: "PricePulse — следи за ценой. Покупай вовремя.",
+    description: "Сравнение магазинов, прогноз цены и общие подборки в одном Telegram Mini App.",
+    type: "website",
+    images: [
+      {
+        url: "/og.png",
+        width: 1536,
+        height: 1024,
+        alt: "PricePulse — мониторинг выгодных цен",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "PricePulse — следи за ценой. Покупай вовремя.",
+    description: "Сравнение магазинов, прогноз цены и общие подборки.",
+    images: ["/og.png"],
+  },
 };
 
 export const viewport: Viewport = {

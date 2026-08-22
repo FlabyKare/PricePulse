@@ -60,7 +60,7 @@ type DiscoveryProduct = {
 
 type DiscoveryResponse = {
   query: string;
-  engine: "ai-web" | "smart-search";
+  engine: "openrouter" | "ai-web" | "smart-search";
   summary: string;
   products: DiscoveryProduct[];
   error?: string;
@@ -83,9 +83,33 @@ type Palette = {
   accent3: string;
 };
 
+type TelegramProfile = {
+  id: string;
+  firstName: string;
+  lastName: string | null;
+  username: string | null;
+  languageCode: string | null;
+  photoUrl: string | null;
+};
+
+type ProfileApiResponse = {
+  profile?: TelegramProfile;
+  state?: {
+    products: Product[];
+    collections: Collection[];
+    palette: Palette;
+    revision: number;
+    updatedAt: string;
+  } | null;
+  error?: string;
+};
+
+type ProfileSyncStatus = "local" | "loading" | "saving" | "synced" | "error";
+
 type TelegramWindow = Window & {
   Telegram?: {
     WebApp?: {
+      initData?: string;
       ready?: () => void;
       expand?: () => void;
       HapticFeedback?: { impactOccurred: (value: string) => void };
@@ -277,7 +301,13 @@ export default function Home() {
   const [selected, setSelected] = useState<Product | null>(null);
   const [toast, setToast] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [catalogReady, setCatalogReady] = useState(false);
+  const [remoteReady, setRemoteReady] = useState(false);
+  const [profile, setProfile] = useState<TelegramProfile | null>(null);
+  const [syncStatus, setSyncStatus] = useState<ProfileSyncStatus>("loading");
+  const [syncMessage, setSyncMessage] = useState("Подключаем Telegram-профиль…");
   const automaticRefreshStarted = useRef(false);
+  const telegramInitData = useRef("");
 
   useEffect(() => {
     const saved = window.localStorage.getItem("pricepulse-products");
@@ -317,10 +347,45 @@ export default function Home() {
         setToast("Не удалось открыть ссылку на подборку");
       }
     }
+
     const telegram = (window as TelegramWindow).Telegram?.WebApp;
     telegram?.ready?.();
     telegram?.expand?.();
+    const initData = telegram?.initData?.trim() ?? "";
+    telegramInitData.current = initData;
     setLoaded(true);
+
+    if (!initData) {
+      setSyncStatus("local");
+      setSyncMessage("Откройте приложение через @price_pulce_bot для облачной памяти");
+      setCatalogReady(true);
+      return;
+    }
+
+    void (async () => {
+      try {
+        const response = await fetch("/api/profile", {
+          headers: { "x-telegram-init-data": initData },
+          cache: "no-store",
+        });
+        const body = await response.json() as ProfileApiResponse;
+        if (!response.ok || !body.profile) throw new Error(body.error || "Не удалось войти через Telegram");
+        setProfile(body.profile);
+        if (body.state) {
+          setProducts(body.state.products.map(normalizeProduct));
+          setCollections(body.state.collections);
+          if (body.state.palette?.accent) setPalette(body.state.palette);
+        }
+        setRemoteReady(true);
+        setSyncStatus("synced");
+        setSyncMessage("Товары и подборки сохранены в облачном профиле");
+      } catch (error) {
+        setSyncStatus("error");
+        setSyncMessage(error instanceof Error ? error.message : "Не удалось подключить облачную память");
+      } finally {
+        setCatalogReady(true);
+      }
+    })();
   }, []);
 
   useEffect(() => {
@@ -328,7 +393,7 @@ export default function Home() {
   }, [products, loaded]);
 
   useEffect(() => {
-    if (!loaded || automaticRefreshStarted.current) return;
+    if (!catalogReady || automaticRefreshStarted.current) return;
     automaticRefreshStarted.current = true;
     const lisProducts = products.filter((product) => isLisSkinsUrl(product.url));
     if (!lisProducts.length) return;
@@ -347,13 +412,41 @@ export default function Home() {
         return resolved ? withResolvedLisPrice(product, resolved) : product;
       }));
     });
-  }, [loaded, products]);
+  }, [catalogReady, products]);
 
   useEffect(() => {
     if (!loaded) return;
     window.localStorage.setItem("pricepulse-collections", JSON.stringify(collections));
     window.localStorage.setItem("pricepulse-palette", JSON.stringify(palette));
   }, [collections, palette, loaded]);
+
+  useEffect(() => {
+    if (!loaded || !remoteReady || !telegramInitData.current) return;
+    setSyncStatus("saving");
+    setSyncMessage("Сохраняем изменения…");
+    const timeout = window.setTimeout(() => {
+      void (async () => {
+        try {
+          const response = await fetch("/api/profile", {
+            method: "PUT",
+            headers: {
+              "content-type": "application/json",
+              "x-telegram-init-data": telegramInitData.current,
+            },
+            body: JSON.stringify({ products, collections, palette }),
+          });
+          const body = await response.json() as { error?: string };
+          if (!response.ok) throw new Error(body.error || "Не удалось сохранить профиль");
+          setSyncStatus("synced");
+          setSyncMessage("Все изменения сохранены в Telegram-профиле");
+        } catch (error) {
+          setSyncStatus("error");
+          setSyncMessage(error instanceof Error ? error.message : "Не удалось сохранить изменения");
+        }
+      })();
+    }, 650);
+    return () => window.clearTimeout(timeout);
+  }, [products, collections, palette, loaded, remoteReady]);
 
   useEffect(() => {
     if (!toast) return;
@@ -381,6 +474,8 @@ export default function Home() {
 
   const totalValue = products.reduce((sum, product) => sum + product.price, 0);
   const favoriteCount = products.filter((product) => product.favorite).length;
+  const displayName = profile?.firstName || "друг";
+  const avatarLetter = displayName.slice(0, 1).toLocaleUpperCase("ru");
   const themeStyle = {
     "--paper": palette.paper,
     "--ink": palette.ink,
@@ -520,7 +615,7 @@ export default function Home() {
           <button className="icon-button notification" aria-label="Уведомления" onClick={() => setToast("Новых уведомлений пока нет")}>
             ♢<span />
           </button>
-          <button className="avatar" aria-label="Профиль Артёма" onClick={() => changeNav("Профиль")}>А</button>
+          <button className="avatar" aria-label={profile ? `Профиль ${displayName}` : "Профиль"} onClick={() => changeNav("Профиль")}>{avatarLetter}</button>
         </div>
       </header>
 
@@ -535,14 +630,14 @@ export default function Home() {
       {activeNav === "ИИ-поиск" ? (
         <DiscoveryView />
       ) : activeNav === "Профиль" ? (
-        <ProfileView products={products} palette={palette} onTheme={() => setThemeOpen(true)} />
+        <ProfileView products={products} palette={palette} profile={profile} syncStatus={syncStatus} syncMessage={syncMessage} onTheme={() => setThemeOpen(true)} />
       ) : activeNav === "Подборки" ? (
         <CollectionsView collections={collections} products={products} onShare={shareCollection} onCreate={() => setCollectionOpen(true)} />
       ) : (
         <>
           <section className="welcome-row">
             <div>
-              <p className="eyebrow">ДОБРЫЙ ВЕЧЕР, АРТЁМ</p>
+              <p className="eyebrow">ДОБРЫЙ ВЕЧЕР, {displayName.toLocaleUpperCase("ru")}</p>
               <h1>{activeNav === "Избранное" ? "Избранные товары" : "Следи за ценой. Покупай вовремя."}</h1>
             </div>
             <button className="text-link" onClick={() => setToast("Все цены обновляются по заданному расписанию")}>Как это работает <span>↗</span></button>
@@ -1032,7 +1127,7 @@ function DiscoveryView() {
             <button className="modal-close" onClick={() => setConsentOpen(false)} aria-label="Закрыть">×</button>
             <div className="modal-kicker"><span>✦</span> РАЗРЕШЕНИЕ НА AI-ПОИСК</div>
             <h2 id="search-consent-title">Разрешить поиск по интернету?</h2>
-            <p className="modal-lead">Чтобы найти товары, PricePulse передаст сервисам Jina AI и Google только текст этого запроса.</p>
+            <p className="modal-lead">Чтобы найти товары, PricePulse передаст только текст запроса сервисам Jina AI, Google и OpenRouter, если он подключён.</p>
             <div className="consent-points">
               <p><span>✓</span><b>Отправится:</b> запрос «{pendingQuery || query}»</p>
               <p><span>×</span><b>Не отправятся:</b> профиль Telegram, карточки и избранное</p>
@@ -1092,17 +1187,46 @@ function DiscoveryView() {
     </section>
   );
 }
-function ProfileView({ products, palette, onTheme }: { products: Product[]; palette: Palette; onTheme: () => void }) {
+function ProfileView({
+  products,
+  palette,
+  profile,
+  syncStatus,
+  syncMessage,
+  onTheme,
+}: {
+  products: Product[];
+  palette: Palette;
+  profile: TelegramProfile | null;
+  syncStatus: ProfileSyncStatus;
+  syncMessage: string;
+  onTheme: () => void;
+}) {
+  const name = profile ? [profile.firstName, profile.lastName].filter(Boolean).join(" ") : "Локальный профиль";
+  const handle = profile?.username ? `@${profile.username}` : profile ? "Вход через Telegram" : "Без облачной синхронизации";
+  const syncLabel = syncStatus === "synced"
+    ? "Сохранено"
+    : syncStatus === "saving"
+      ? "Сохраняем…"
+      : syncStatus === "loading"
+        ? "Подключаем…"
+        : syncStatus === "error"
+          ? "Нужна настройка"
+          : "Только на устройстве";
+
   return (
     <section className="profile-view">
       <div className="profile-card">
-        <div className="profile-avatar">А</div>
-        <div><p>Telegram-профиль</p><h1>Артём</h1><span>@artem</span></div>
+        <div className="profile-avatar">{name.slice(0, 1).toLocaleUpperCase("ru")}</div>
+        <div><p>{profile ? "Telegram-профиль" : "Локальный режим"}</p><h1>{name}</h1><span>{handle}</span></div>
+        <span className={`profile-sync-badge ${syncStatus}`}>{syncLabel}</span>
       </div>
+      <p className={`profile-sync-note ${syncStatus}`}>{syncMessage}</p>
       <div className="settings-card">
         <h2>Мониторинг</h2>
         <div className="setting-row"><span>Активных товаров</span><b>{products.length}</b></div>
-        <div className="setting-row"><span>Уведомления в Telegram</span><b className="status-on">Включены</b></div>
+        <div className="setting-row"><span>Память профиля</span><b className={syncStatus === "synced" ? "status-on" : "status-warn"}>{syncLabel}</b></div>
+        <div className="setting-row"><span>Авторизация</span><b>{profile ? "Telegram · без e-mail" : "Откройте через бота"}</b></div>
         <div className="setting-row"><span>Валюта</span><b>RUB</b></div>
         <button className="setting-row theme-setting" onClick={onTheme}><span>Цветовая палитра</span><b><i style={{ background: palette.accent }} /><i style={{ background: palette.accent2 }} /><i style={{ background: palette.accent3 }} /> {palette.name} →</b></button>
       </div>
@@ -1110,7 +1234,8 @@ function ProfileView({ products, palette, onTheme }: { products: Product[]; pale
         <h2>Новые возможности</h2>
         <div className="idea-row enabled"><span>↯</span><p><b>Сравнение магазинов</b><small>Добавляйте предложения прямо в карточке</small></p><i>✓</i></div>
         <div className="idea-row enabled"><span>↘</span><p><b>Прогноз выгодной цены</b><small>Рекомендация на основе истории и тренда</small></p><i>✓</i></div>
-        <div className="idea-row enabled"><span>⇧</span><p><b>Общие подборки</b><small>Ссылки открываются и импортируются автоматически</small></p><i>✓</i></div>
+        <div className="idea-row enabled"><span>⇧</span><p><b>Общие подборки</b><small>Сохраняются отдельно в каждом Telegram-профиле</small></p><i>✓</i></div>
+        <div className="idea-row enabled"><span>✦</span><p><b>OpenRouter-ready</b><small>Автоматически включится после добавления серверного API-ключа</small></p><i>✓</i></div>
       </div>
     </section>
   );

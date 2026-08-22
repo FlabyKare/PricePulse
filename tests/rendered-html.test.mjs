@@ -48,6 +48,10 @@ test("removes the temporary starter preview", async () => {
 
   assert.match(page, /PricePulse/);
   assert.match(page, /localStorage/);
+  assert.match(page, /deleteProduct/);
+  assert.match(page, /ИИ-поиск/);
+  assert.match(page, /steamcommunity\.com\/market\/search\?appid=730/);
+  assert.match(page, /market\.csgo\.com\/en/);
   assert.match(layout, /title: "PricePulse/);
   assert.match(css, /prefers-reduced-motion/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);

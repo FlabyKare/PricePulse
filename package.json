@@ -10,7 +10,7 @@
     "build": "vinext build",
     "start": "vinext start",
     "bot": "node bot/index.mjs",
-    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/bot.test.mjs tests/lis-skins.test.mjs tests/discovery.test.mjs tests/telegram-auth.test.mjs tests/rates.test.mjs",
+    "test": "npm run build && node --test tests/rendered-html.test.mjs tests/bot.test.mjs tests/lis-skins.test.mjs tests/discovery.test.mjs tests/assistant.test.mjs tests/investments.test.mjs tests/telegram-auth.test.mjs tests/rates.test.mjs",
     "test:bot": "node --test tests/bot.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate"

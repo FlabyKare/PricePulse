@@ -65,3 +65,32 @@ test("builds product cards with reviews prices and multiple sources", async () =
     assert.match(JSON.stringify(body.products), /Наушники sony wh-1000xm5/);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+
+test("detects CS2 context and returns exact LIS-SKINS catalogue links", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.includes("suggestqueries.google.com")) {
+      return new Response(new TextEncoder().encode(JSON.stringify(["глок", []])), { headers: { "content-type": "application/json; charset=utf-8" } });
+    }
+    if (url.includes("s.jina.ai")) return Response.json({ data: [] });
+    if (url.includes("market_export_json/csgo.json")) {
+      return Response.json([
+        { name: "Glock-18 | Pink DDPAT (Field-Tested)", price: 20.15, count: 72, url: "https://lis-skins.com/market/csgo/glock-18-pink-ddpat-field-tested/" },
+        { name: "Glock-18 | Water Elemental (Factory New)", price: 60.71, count: 79, url: "https://lis-skins.com/market/csgo/glock-18-water-elemental-factory-new/" },
+      ]);
+    }
+    throw new Error(`Unexpected URL: ${url}`);
+  };
+  try {
+    const response = await discover({ query: "новый глок в кс 2 из новой коллекции розовый", externalSearchConsent: true });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.intent, "cs2");
+    assert.match(body.summary, /LIS-SKINS/);
+    assert.match(body.products[0].name, /Glock-18.*Pink DDPAT/);
+    assert.ok(body.products[0].sources.some((source) => source.url === "https://lis-skins.com/market/csgo/glock-18-pink-ddpat-field-tested/"));
+    assert.ok(body.products[0].sources.some((source) => /csfloat\.com|dmarket\.com|steamcommunity\.com/.test(source.url)));
+  } finally { globalThis.fetch = originalFetch; }
+});

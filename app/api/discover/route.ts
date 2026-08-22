@@ -35,7 +35,7 @@ async function suggestionsFor(query: string) {
     url.searchParams.set("client", "firefox"); url.searchParams.set("hl", "ru"); url.searchParams.set("ds", "sh"); url.searchParams.set("q", query);
     const response = await fetch(url, { headers: { accept: "application/json" }, cache: "no-store" });
     if (!response.ok) return [];
-    const payload = await response.json() as unknown;
+    const payload = JSON.parse(new TextDecoder("utf-8").decode(await response.arrayBuffer())) as unknown;
     if (!Array.isArray(payload) || !Array.isArray(payload[1])) return [];
     return (payload[1] as unknown[]).filter((item): item is string => typeof item === "string").map(productName).filter(Boolean);
   } catch { return []; }

@@ -20,6 +20,7 @@ export const profileStates = sqliteTable("profile_states", {
   productsJson: text("products_json").notNull().default("[]"),
   collectionsJson: text("collections_json").notNull().default("[]"),
   paletteJson: text("palette_json").notNull().default("{}"),
+  currency: text("currency").notNull().default("RUB"),
   revision: integer("revision").notNull().default(1),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });

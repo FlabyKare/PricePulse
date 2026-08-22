@@ -43,7 +43,7 @@ test("builds product cards with reviews prices and multiple sources", async () =
     const url = input instanceof Request ? input.url : String(input);
     if (url.includes("suggestqueries.google.com")) {
       const bytes = new TextEncoder().encode(JSON.stringify(["наушники", ["наушники sony wh-1000xm5", "наушники jbl"]]));
-      return new Response(bytes, { headers: { "content-type": "application/json; charset=iso-8859-1" } });
+      return new Response(bytes, { headers: { "content-type": "application/json; charset=utf-8" } });
     }
     if (url.includes("s.jina.ai")) {
       return Response.json({ data: [{

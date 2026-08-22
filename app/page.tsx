@@ -41,6 +41,31 @@ type ResolvedLisProduct = {
   approximate: boolean;
 };
 
+type DiscoverySource = {
+  title: string;
+  url: string;
+  kind: "магазин" | "обзор" | "поиск";
+};
+
+type DiscoveryProduct = {
+  id: string;
+  name: string;
+  description: string;
+  priceLabel: string;
+  ratingLabel: string;
+  popularity: string;
+  sourceCount: number;
+  sources: DiscoverySource[];
+};
+
+type DiscoveryResponse = {
+  query: string;
+  engine: "ai-web" | "smart-search";
+  summary: string;
+  products: DiscoveryProduct[];
+  error?: string;
+};
+
 type Collection = {
   id: string;
   name: string;
@@ -222,6 +247,17 @@ function withResolvedLisPrice(product: Product, resolved: ResolvedLisProduct): P
   };
 }
 
+function offerUrlForProduct(offer: Offer, productName: string) {
+  const store = `${offer.store} ${offer.url}`.toLocaleLowerCase("en");
+  if (store.includes("steamcommunity") || store.includes("steam")) {
+    return `https://steamcommunity.com/market/search?appid=730&q=${encodeURIComponent(productName)}`;
+  }
+  if (store.includes("market.csgo") || store.includes("cs.market")) {
+    return `https://market.csgo.com/en/${encodeURIComponent(productName)}`;
+  }
+  return offer.url;
+}
+
 function haptic(style: "light" | "medium" = "light") {
   const telegram = (window as TelegramWindow).Telegram?.WebApp;
   telegram?.HapticFeedback?.impactOccurred(style);
@@ -371,6 +407,7 @@ export default function Home() {
     }
     setActiveNav(item);
     setActiveCategory("Все");
+    setSearchOpen(false);
   }
 
   function addProduct(product: Product) {
@@ -379,6 +416,19 @@ export default function Home() {
     setActiveCategory("Все");
     setAddOpen(false);
     setToast("Товар добавлен. Первый чек — через 2 минуты");
+    haptic("medium");
+  }
+
+  function deleteProduct(id: number) {
+    const product = products.find((item) => item.id === id);
+    if (!product || !window.confirm(`Удалить карточку «${product.name}»?`)) return;
+    setProducts((current) => current.filter((item) => item.id !== id));
+    setCollections((current) => current.map((collection) => ({
+      ...collection,
+      productIds: collection.productIds.filter((productId) => productId !== id),
+    })));
+    setSelected(null);
+    setToast(`Карточка «${product.name}» удалена`);
     haptic("medium");
   }
 
@@ -482,7 +532,9 @@ export default function Home() {
         </div>
       )}
 
-      {activeNav === "Профиль" ? (
+      {activeNav === "ИИ-поиск" ? (
+        <DiscoveryView />
+      ) : activeNav === "Профиль" ? (
         <ProfileView products={products} palette={palette} onTheme={() => setThemeOpen(true)} />
       ) : activeNav === "Подборки" ? (
         <CollectionsView collections={collections} products={products} onShare={shareCollection} onCreate={() => setCollectionOpen(true)} />
@@ -534,7 +586,7 @@ export default function Home() {
             {visibleProducts.length ? (
               <div className="product-grid">
                 {visibleProducts.map((product) => (
-                  <ProductCard key={product.id} product={product} onFavorite={toggleFavorite} onOpen={setSelected} />
+                  <ProductCard key={product.id} product={product} onFavorite={toggleFavorite} onDelete={deleteProduct} onOpen={setSelected} />
                 ))}
               </div>
             ) : (
@@ -554,8 +606,8 @@ export default function Home() {
           ["Главная", "⌂"],
           ["Подборки", "▦"],
           ["Добавить", "+"],
+          ["ИИ-поиск", "✦"],
           ["Избранное", "♡"],
-          ["Профиль", "○"],
         ].map(([item, icon]) => (
           <button key={item} className={`${activeNav === item ? "current" : ""} ${item === "Добавить" ? "nav-add" : ""}`} onClick={() => changeNav(item)} aria-label={item}>
             <span>{icon}</span><small>{item}</small>
@@ -573,6 +625,7 @@ export default function Home() {
           onFavorite={toggleFavorite}
           onCheck={checkPrice}
           onAddOffer={addOffer}
+          onDelete={deleteProduct}
           onPeriod={(id, period) => {
             setProducts((current) => current.map((product) => product.id === id ? { ...product, period, nextCheck: `через ${period} ч` } : product));
             setSelected((current) => current ? { ...current, period } : current);
@@ -585,7 +638,7 @@ export default function Home() {
   );
 }
 
-function ProductCard({ product, onFavorite, onOpen }: { product: Product; onFavorite: (id: number) => void; onOpen: (product: Product) => void }) {
+function ProductCard({ product, onFavorite, onDelete, onOpen }: { product: Product; onFavorite: (id: number) => void; onDelete: (id: number) => void; onOpen: (product: Product) => void }) {
   const forecast = forecastFor(product);
   return (
     <article className="product-card" role="button" tabIndex={0} onClick={() => onOpen(product)} onKeyDown={(event) => event.key === "Enter" && onOpen(product)}>
@@ -597,6 +650,7 @@ function ProductCard({ product, onFavorite, onOpen }: { product: Product; onFavo
         <button className={`heart ${product.favorite ? "liked" : ""}`} aria-label={product.favorite ? "Убрать из избранного" : "Добавить в избранное"} onClick={(event) => { event.stopPropagation(); onFavorite(product.id); }}>
           {product.favorite ? "♥" : "♡"}
         </button>
+        <button className="card-delete" aria-label={`Удалить ${product.name}`} onClick={(event) => { event.stopPropagation(); onDelete(product.id); }}>⌫</button>
       </div>
       <div className="product-body">
         <div className="product-title-row">
@@ -748,7 +802,7 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
     </div>
   );
 }
-function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAddOffer }: { product: Product; onClose: () => void; onFavorite: (id: number) => void; onCheck: (id: number) => void; onPeriod: (id: number, period: number) => void; onAddOffer: (id: number, url: string) => void }) {
+function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAddOffer, onDelete }: { product: Product; onClose: () => void; onFavorite: (id: number) => void; onCheck: (id: number) => void; onPeriod: (id: number, period: number) => void; onAddOffer: (id: number, url: string) => void; onDelete: (id: number) => void }) {
   const [offerInputOpen, setOfferInputOpen] = useState(false);
   const [offerUrl, setOfferUrl] = useState("");
   const forecast = forecastFor(product);
@@ -784,7 +838,7 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAdd
         </div>
         <div className="offer-list">
           {offers.map((offer, index) => (
-            <button key={offer.id} className="offer-row" onClick={() => window.open(offer.url, "_blank", "noopener,noreferrer")}>
+            <button key={offer.id} className="offer-row" onClick={() => window.open(offerUrlForProduct(offer, product.name), "_blank", "noopener,noreferrer")}>
               <span className="offer-rank">{index + 1}</span>
               <span><b>{offer.store}</b><small>{offer.note}</small></span>
               <span className="offer-price"><b>{formatPrice(offer.price)}</b>{index === 0 && <small>Лучшая цена</small>}</span>
@@ -807,6 +861,7 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAdd
           <button className="secondary-button" onClick={() => window.open(product.url, "_blank", "noopener,noreferrer")}>Открыть магазин ↗</button>
           <button className="primary-button" onClick={() => onCheck(product.id)}>Проверить сейчас</button>
         </div>
+        <button className="delete-product-button" onClick={() => onDelete(product.id)}>⌫ Удалить карточку</button>
       </section>
     </div>
   );
@@ -901,6 +956,99 @@ function ThemeModal({ palette, onApply, onClose }: { palette: Palette; onApply: 
   );
 }
 
+function DiscoveryView() {
+  const [query, setQuery] = useState("");
+  const [consent, setConsent] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [summary, setSummary] = useState("");
+  const [results, setResults] = useState<DiscoveryProduct[]>([]);
+  const [selected, setSelected] = useState<DiscoveryProduct | null>(null);
+  const prompts = ["Наушники до 20 000 ₽", "Робот-пылесос", "Телефон до 50 000 ₽", "Популярные скины CS2"];
+
+  async function searchProducts(value = query) {
+    const finalQuery = value.trim();
+    if (!consent) { setError("Подтвердите передачу только текста запроса внешнему AI-поиску"); return; }
+    if (finalQuery.length < 2) { setError("Опишите, какой товар хотите найти"); return; }
+    setQuery(finalQuery); setLoading(true); setError("");
+    try {
+      const response = await fetch("/api/discover", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ query: finalQuery, externalSearchConsent: true }),
+      });
+      const body = await response.json() as DiscoveryResponse;
+      if (!response.ok) throw new Error(body.error || "Не удалось выполнить поиск");
+      setResults(body.products); setSummary(body.summary);
+    } catch (searchError) {
+      setError(searchError instanceof Error ? searchError.message : "Не удалось выполнить поиск");
+    } finally { setLoading(false); }
+  }
+
+  return (
+    <section className="discovery-view">
+      <div className="discovery-hero">
+        <div className="ai-orb">✦</div>
+        <p className="eyebrow">AI-ПОИСК ПО ТОВАРАМ И ОТЗЫВАМ</p>
+        <h1>Найдём популярное и сравним источники.</h1>
+        <p className="discovery-lead">Опишите товар, бюджет или задачу. Умный поиск соберёт варианты, отзывы и прямые ссылки на магазины.</p>
+        <form className="discovery-search" onSubmit={(event) => { event.preventDefault(); void searchProducts(); }}>
+          <input value={query} onChange={(event) => { setQuery(event.target.value); setError(""); }} placeholder="Например: беспроводные наушники до 20 000 ₽" aria-label="Запрос для AI-поиска" />
+          <button type="submit" disabled={loading}>{loading ? "Ищем…" : "Найти"} <span>→</span></button>
+        </form>
+        <label className="search-consent">
+          <input type="checkbox" checked={consent} onChange={(event) => { setConsent(event.target.checked); setError(""); }} />
+          <span>Передать только текст запроса внешним сервисам Jina AI и Google. Профиль Telegram и мои карточки не отправляются.</span>
+        </label>
+        <div className="prompt-chips">{prompts.map((prompt) => <button key={prompt} onClick={() => { setQuery(prompt); if (consent) void searchProducts(prompt); }}>{prompt}</button>)}</div>
+        {error && <p className="discovery-error" role="alert">{error}</p>}
+      </div>
+
+      <div className="discovery-results-head">
+        <div><h2>{results.length ? "AI-подборка" : "Начните с запроса"}</h2><p>{summary || "Карточки появятся здесь — нажмите на любую, чтобы увидеть несколько источников."}</p></div>
+        {results.length > 0 && <span>{results.length} вариантов</span>}
+      </div>
+      {loading ? (
+        <div className="discovery-loading"><span>✦</span><p>Сопоставляем популярность, отзывы и цены…</p></div>
+      ) : results.length > 0 ? (
+        <div className="discovery-grid">
+          {results.map((item, index) => (
+            <button className="discovery-card" key={item.id} onClick={() => setSelected(item)}>
+              <div className={`discovery-art art-${index % 3}`}><span>{item.name.split(/\s+/).slice(0, 2).map((word) => word[0]).join("").toUpperCase()}</span><i>✦ AI</i></div>
+              <div className="discovery-card-body">
+                <span className="popularity-badge">{item.popularity}</span>
+                <h3>{item.name}</h3>
+                <p>{item.description}</p>
+                <div className="discovery-meta"><b>{item.priceLabel}</b><span>★ {item.ratingLabel}</span></div>
+                <div className="discovery-open"><span>{item.sourceCount} источника</span><b>Сравнить →</b></div>
+              </div>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="discovery-empty"><span>⌕</span><h3>Что хотите подобрать?</h3><p>Можно написать категорию, бюджет, бренд или задачу.</p></div>
+      )}
+
+      {selected && (
+        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSelected(null)}>
+          <section className="modal discovery-modal" role="dialog" aria-modal="true" aria-labelledby="discovery-title">
+            <div className="modal-handle" /><button className="modal-close" onClick={() => setSelected(null)} aria-label="Закрыть">×</button>
+            <div className="modal-kicker"><span>✦</span> ИСТОЧНИКИ AI-ПОДБОРКИ</div>
+            <h2 id="discovery-title">{selected.name}</h2>
+            <p className="modal-lead">{selected.description}</p>
+            <div className="source-list">
+              {selected.sources.map((source, index) => (
+                <a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer">
+                  <span>{index + 1}</span><div><small>{source.kind}</small><b>{source.title}</b></div><i>↗</i>
+                </a>
+              ))}
+            </div>
+            <p className="source-note">Цены и наличие меняются. Проверяйте итоговую стоимость на странице магазина.</p>
+          </section>
+        </div>
+      )}
+    </section>
+  );
+}
 function ProfileView({ products, palette, onTheme }: { products: Product[]; palette: Palette; onTheme: () => void }) {
   return (
     <section className="profile-view">

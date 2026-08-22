@@ -959,17 +959,33 @@ function ThemeModal({ palette, onApply, onClose }: { palette: Palette; onApply: 
 function DiscoveryView() {
   const [query, setQuery] = useState("");
   const [consent, setConsent] = useState(false);
+  const [consentOpen, setConsentOpen] = useState(false);
+  const [pendingQuery, setPendingQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [summary, setSummary] = useState("");
   const [results, setResults] = useState<DiscoveryProduct[]>([]);
   const [selected, setSelected] = useState<DiscoveryProduct | null>(null);
   const prompts = ["Наушники до 20 000 ₽", "Робот-пылесос", "Телефон до 50 000 ₽", "Популярные скины CS2"];
+  const consentStorageKey = "pricepulse-external-search-consent";
 
-  async function searchProducts(value = query) {
+  useEffect(() => {
+    setConsent(window.localStorage.getItem(consentStorageKey) === "true");
+  }, []);
+
+  async function searchProducts(value = query, consentGranted = consent) {
     const finalQuery = value.trim();
-    if (!consent) { setError("Подтвердите передачу только текста запроса внешнему AI-поиску"); return; }
     if (finalQuery.length < 2) { setError("Опишите, какой товар хотите найти"); return; }
+    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    if (!consentGranted) {
+      setQuery(finalQuery);
+      setPendingQuery(finalQuery);
+      setConsentOpen(true);
+      setError("");
+      return;
+    }
     setQuery(finalQuery); setLoading(true); setError("");
     try {
       const response = await fetch("/api/discover", {
@@ -984,6 +1000,15 @@ function DiscoveryView() {
     } finally { setLoading(false); }
   }
 
+  function approveExternalSearch() {
+    const queuedQuery = pendingQuery || query.trim();
+    setConsent(true);
+    window.localStorage.setItem(consentStorageKey, "true");
+    setConsentOpen(false);
+    setPendingQuery("");
+    void searchProducts(queuedQuery, true);
+  }
+
   return (
     <section className="discovery-view">
       <div className="discovery-hero">
@@ -992,16 +1017,34 @@ function DiscoveryView() {
         <h1>Найдём популярное и сравним источники.</h1>
         <p className="discovery-lead">Опишите товар, бюджет или задачу. Умный поиск соберёт варианты, отзывы и прямые ссылки на магазины.</p>
         <form className="discovery-search" onSubmit={(event) => { event.preventDefault(); void searchProducts(); }}>
-          <input value={query} onChange={(event) => { setQuery(event.target.value); setError(""); }} placeholder="Например: беспроводные наушники до 20 000 ₽" aria-label="Запрос для AI-поиска" />
+          <input type="search" inputMode="search" enterKeyHint="search" autoComplete="off" value={query} onChange={(event) => { setQuery(event.target.value); setError(""); }} placeholder="Например: беспроводные наушники до 20 000 ₽" aria-label="Запрос для AI-поиска" />
           <button type="submit" disabled={loading}>{loading ? "Ищем…" : "Найти"} <span>→</span></button>
         </form>
-        <label className="search-consent">
-          <input type="checkbox" checked={consent} onChange={(event) => { setConsent(event.target.checked); setError(""); }} />
-          <span>Передать только текст запроса внешним сервисам Jina AI и Google. Профиль Telegram и мои карточки не отправляются.</span>
-        </label>
-        <div className="prompt-chips">{prompts.map((prompt) => <button key={prompt} onClick={() => { setQuery(prompt); if (consent) void searchProducts(prompt); }}>{prompt}</button>)}</div>
+        <p className="search-privacy-note"><span>✓</span> Первый поиск попросит разрешение передать только текст запроса. Выбор сохранится на этом устройстве.</p>
+        <div className="prompt-chips">{prompts.map((prompt) => <button type="button" key={prompt} onClick={() => { setQuery(prompt); void searchProducts(prompt); }}>{prompt}</button>)}</div>
         {error && <p className="discovery-error" role="alert">{error}</p>}
       </div>
+
+      {consentOpen && (
+        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setConsentOpen(false)}>
+          <section className="modal search-consent-modal" role="dialog" aria-modal="true" aria-labelledby="search-consent-title">
+            <div className="modal-handle" />
+            <button className="modal-close" onClick={() => setConsentOpen(false)} aria-label="Закрыть">×</button>
+            <div className="modal-kicker"><span>✦</span> РАЗРЕШЕНИЕ НА AI-ПОИСК</div>
+            <h2 id="search-consent-title">Разрешить поиск по интернету?</h2>
+            <p className="modal-lead">Чтобы найти товары, PricePulse передаст сервисам Jina AI и Google только текст этого запроса.</p>
+            <div className="consent-points">
+              <p><span>✓</span><b>Отправится:</b> запрос «{pendingQuery || query}»</p>
+              <p><span>×</span><b>Не отправятся:</b> профиль Telegram, карточки и избранное</p>
+            </div>
+            <p className="consent-memory">Разрешение сохранится на этом устройстве. Его можно сбросить, очистив данные мини-приложения.</p>
+            <div className="consent-actions">
+              <button type="button" className="primary-button" onClick={approveExternalSearch}>Разрешить и найти <span>→</span></button>
+              <button type="button" className="secondary-button" onClick={() => { setConsentOpen(false); setPendingQuery(""); }}>Отмена</button>
+            </div>
+          </section>
+        </div>
+      )}
 
       <div className="discovery-results-head">
         <div><h2>{results.length ? "AI-подборка" : "Начните с запроса"}</h2><p>{summary || "Карточки появятся здесь — нажмите на любую, чтобы увидеть несколько источников."}</p></div>

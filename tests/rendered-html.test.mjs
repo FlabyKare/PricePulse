@@ -54,9 +54,14 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /Разрешить и найти/);
   assert.match(page, /pricepulse-external-search-consent/);
   assert.match(page, /x-telegram-init-data/);
-  assert.match(page, /Telegram · без e-mail/);
+  assert.match(page, /TELEGRAM ACCOUNT/);
+  assert.match(page, /pricepulse-currency/);
+  assert.match(page, /\/api\/rates/);
+  assert.match(page, /Обновить все цены/);
   assert.match(page, /OpenRouter-ready/);
   assert.match(css, /profile-sync-badge/);
+  assert.match(css, /\.primary-button[^}]*display:\s*inline-flex/s);
+  assert.match(css, /currency-switch/);
   assert.match(css, /\.discovery-search input[^}]*font-size:\s*16px/s);
   assert.match(page, /steamcommunity\.com\/market\/search\?appid=730/);
   assert.match(page, /market\.csgo\.com\/en/);

@@ -7,6 +7,7 @@ type ProfileStatePayload = {
   products?: unknown;
   collections?: unknown;
   palette?: unknown;
+  currency?: unknown;
 };
 
 const MAX_STATE_BYTES = 750_000;
@@ -33,10 +34,14 @@ function validatedState(payload: ProfileStatePayload) {
   const productsJson = JSON.stringify(payload.products);
   const collectionsJson = JSON.stringify(payload.collections);
   const paletteJson = JSON.stringify(payload.palette);
+  const currency = payload.currency;
+  if (currency !== "RUB" && currency !== "USD" && currency !== "EUR") {
+    throw new Error("Неизвестная валюта");
+  }
   if (productsJson.length + collectionsJson.length + paletteJson.length > MAX_STATE_BYTES) {
     throw new Error("Профиль превысил допустимый размер");
   }
-  return { productsJson, collectionsJson, paletteJson };
+  return { productsJson, collectionsJson, paletteJson, currency };
 }
 
 async function upsertTelegramUser(user: NonNullable<Awaited<ReturnType<typeof authenticateTelegramRequest>>["user"]>) {
@@ -77,6 +82,7 @@ export async function GET(request: Request) {
         products: parseJson(stored.productsJson, []),
         collections: parseJson(stored.collectionsJson, []),
         palette: parseJson(stored.paletteJson, {}),
+        currency: stored.currency,
         revision: stored.revision,
         updatedAt: stored.updatedAt,
       } : null,

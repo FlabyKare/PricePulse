@@ -1,7 +1,7 @@
 "use client";
 
 import type { CSSProperties } from "react";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, FormEvent, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { isLisSkinsUrl } from "@/lib/lis-skins";
 
 type Offer = {
@@ -83,6 +83,9 @@ type Palette = {
   accent3: string;
 };
 
+type CurrencyCode = "RUB" | "USD" | "EUR";
+type CurrencyRates = { RUB: 1; USD: number; EUR: number };
+
 type TelegramProfile = {
   id: string;
   firstName: string;
@@ -98,6 +101,7 @@ type ProfileApiResponse = {
     products: Product[];
     collections: Collection[];
     palette: Palette;
+    currency: CurrencyCode;
     revision: number;
     updatedAt: string;
   } | null;
@@ -110,6 +114,16 @@ type TelegramWindow = Window & {
   Telegram?: {
     WebApp?: {
       initData?: string;
+      initDataUnsafe?: {
+        user?: {
+          id: string | number;
+          first_name: string;
+          last_name?: string;
+          username?: string;
+          language_code?: string;
+          photo_url?: string;
+        };
+      };
       ready?: () => void;
       expand?: () => void;
       HapticFeedback?: { impactOccurred: (value: string) => void };
@@ -215,8 +229,28 @@ const palettes: Palette[] = [
   { id: "sand", name: "Sand", paper: "#f8f1e3", ink: "#292318", card: "#fffdf7", accent: "#e7a94b", accent2: "#7fb7a5", accent3: "#d27b78" },
 ];
 
-const formatPrice = (value: number) =>
-  new Intl.NumberFormat("ru-RU").format(value) + " ₽";
+const defaultRates: CurrencyRates = { RUB: 1, USD: 0, EUR: 0 };
+const CurrencyContext = createContext<{ currency: CurrencyCode; rates: CurrencyRates }>({
+  currency: "RUB",
+  rates: defaultRates,
+});
+
+function formatPriceValue(value: number, currency: CurrencyCode, rates: CurrencyRates) {
+  const rate = rates[currency];
+  if (!rate) return "—";
+  const converted = currency === "RUB" ? value : value / rate;
+  return new Intl.NumberFormat("ru-RU", {
+    style: "currency",
+    currency,
+    currencyDisplay: "symbol",
+    maximumFractionDigits: currency === "RUB" ? 0 : 2,
+  }).format(converted);
+}
+
+function usePriceFormatter() {
+  const { currency, rates } = useContext(CurrencyContext);
+  return (value: number) => formatPriceValue(value, currency, rates);
+}
 
 const chartValues = [56, 48, 52, 37, 43, 29, 22, 30, 18, 12];
 
@@ -291,6 +325,8 @@ export default function Home() {
   const [products, setProducts] = useState<Product[]>(initialProducts);
   const [collections, setCollections] = useState<Collection[]>(initialCollections);
   const [palette, setPalette] = useState<Palette>(palettes[0]);
+  const [currency, setCurrency] = useState<CurrencyCode>("RUB");
+  const [rates, setRates] = useState<CurrencyRates>(defaultRates);
   const [activeCategory, setActiveCategory] = useState("Все");
   const [activeNav, setActiveNav] = useState("Главная");
   const [search, setSearch] = useState("");
@@ -334,6 +370,18 @@ export default function Home() {
         window.localStorage.removeItem("pricepulse-palette");
       }
     }
+    const savedCurrency = window.localStorage.getItem("pricepulse-currency");
+    if (savedCurrency === "RUB" || savedCurrency === "USD" || savedCurrency === "EUR") {
+      setCurrency(savedCurrency);
+    }
+    const savedProfile = window.localStorage.getItem("pricepulse-telegram-profile");
+    if (savedProfile) {
+      try {
+        setProfile(JSON.parse(savedProfile) as TelegramProfile);
+      } catch {
+        window.localStorage.removeItem("pricepulse-telegram-profile");
+      }
+    }
     const sharedCode = window.location.hash.match(/collection=([^&]+)/)?.[1];
     if (sharedCode) {
       try {
@@ -351,13 +399,27 @@ export default function Home() {
     const telegram = (window as TelegramWindow).Telegram?.WebApp;
     telegram?.ready?.();
     telegram?.expand?.();
+    const unsafeUser = telegram?.initDataUnsafe?.user;
+    if (unsafeUser?.id && unsafeUser.first_name) {
+      const telegramProfile: TelegramProfile = {
+        id: String(unsafeUser.id),
+        firstName: unsafeUser.first_name,
+        lastName: unsafeUser.last_name?.trim() || null,
+        username: unsafeUser.username?.trim() || null,
+        languageCode: unsafeUser.language_code?.trim() || null,
+        photoUrl: unsafeUser.photo_url?.trim() || null,
+      };
+      setProfile(telegramProfile);
+      window.localStorage.setItem("pricepulse-telegram-profile", JSON.stringify(telegramProfile));
+    }
+
     const initData = telegram?.initData?.trim() ?? "";
     telegramInitData.current = initData;
     setLoaded(true);
 
     if (!initData) {
       setSyncStatus("local");
-      setSyncMessage("Откройте приложение через @price_pulce_bot для облачной памяти");
+      setSyncMessage("");
       setCatalogReady(true);
       return;
     }
@@ -371,10 +433,14 @@ export default function Home() {
         const body = await response.json() as ProfileApiResponse;
         if (!response.ok || !body.profile) throw new Error(body.error || "Не удалось войти через Telegram");
         setProfile(body.profile);
+        window.localStorage.setItem("pricepulse-telegram-profile", JSON.stringify(body.profile));
         if (body.state) {
           setProducts(body.state.products.map(normalizeProduct));
           setCollections(body.state.collections);
           if (body.state.palette?.accent) setPalette(body.state.palette);
+          if (body.state.currency === "RUB" || body.state.currency === "USD" || body.state.currency === "EUR") {
+            setCurrency(body.state.currency);
+          }
         }
         setRemoteReady(true);
         setSyncStatus("synced");
@@ -391,6 +457,19 @@ export default function Home() {
   useEffect(() => {
     if (loaded) window.localStorage.setItem("pricepulse-products", JSON.stringify(products));
   }, [products, loaded]);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const response = await fetch("/api/rates", { cache: "no-store" });
+        const body = await response.json() as { rates?: Partial<CurrencyRates> };
+        if (!response.ok || !body.rates?.USD || !body.rates?.EUR) return;
+        setRates({ RUB: 1, USD: body.rates.USD, EUR: body.rates.EUR });
+      } catch {
+        // RUB remains available when the rates provider is temporarily unavailable.
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     if (!catalogReady || automaticRefreshStarted.current) return;
@@ -418,7 +497,8 @@ export default function Home() {
     if (!loaded) return;
     window.localStorage.setItem("pricepulse-collections", JSON.stringify(collections));
     window.localStorage.setItem("pricepulse-palette", JSON.stringify(palette));
-  }, [collections, palette, loaded]);
+    window.localStorage.setItem("pricepulse-currency", currency);
+  }, [collections, palette, currency, loaded]);
 
   useEffect(() => {
     if (!loaded || !remoteReady || !telegramInitData.current) return;
@@ -433,7 +513,7 @@ export default function Home() {
               "content-type": "application/json",
               "x-telegram-init-data": telegramInitData.current,
             },
-            body: JSON.stringify({ products, collections, palette }),
+            body: JSON.stringify({ products, collections, palette, currency }),
           });
           const body = await response.json() as { error?: string };
           if (!response.ok) throw new Error(body.error || "Не удалось сохранить профиль");
@@ -446,7 +526,7 @@ export default function Home() {
       })();
     }, 650);
     return () => window.clearTimeout(timeout);
-  }, [products, collections, palette, loaded, remoteReady]);
+  }, [products, collections, palette, currency, loaded, remoteReady]);
 
   useEffect(() => {
     if (!toast) return;
@@ -472,6 +552,7 @@ export default function Home() {
     return result;
   }, [products, activeCategory, activeNav, search]);
 
+  const formatPrice = (value: number) => formatPriceValue(value, currency, rates);
   const totalValue = products.reduce((sum, product) => sum + product.price, 0);
   const favoriteCount = products.filter((product) => product.favorite).length;
   const displayName = profile?.firstName || "друг";
@@ -545,6 +626,33 @@ export default function Home() {
     }
   }
 
+  async function refreshAllPrices() {
+    const lisProducts = products.filter((product) => isLisSkinsUrl(product.url));
+    if (!lisProducts.length) {
+      setToast("Нет товаров LIS-SKINS для автоматического обновления");
+      return;
+    }
+    setToast(`Обновляем ${lisProducts.length} цен…`);
+    const results = await Promise.allSettled(lisProducts.map(async (product) => ({
+      id: product.id,
+      resolved: await resolveLisProduct(product.url),
+    })));
+    const updates = new Map<number, ResolvedLisProduct>();
+    results.forEach((result) => {
+      if (result.status === "fulfilled") updates.set(result.value.id, result.value.resolved);
+    });
+    if (updates.size) {
+      setProducts((current) => current.map((product) => {
+        const resolved = updates.get(product.id);
+        return resolved ? withResolvedLisPrice(product, resolved) : product;
+      }));
+    }
+    setToast(updates.size
+      ? `Обновлено цен: ${updates.size} из ${lisProducts.length}`
+      : "Не удалось обновить цены — попробуйте позже");
+    haptic("medium");
+  }
+
   async function addOffer(productId: number, url: string) {
     let parsed: URL;
     try {
@@ -595,6 +703,7 @@ export default function Home() {
   }
 
   return (
+    <CurrencyContext.Provider value={{ currency, rates }}>
     <main className="app-shell" style={themeStyle}>
       <header className="topbar">
         <button className="brand" aria-label="PricePulse — на главную" onClick={() => changeNav("Главная")}>
@@ -630,7 +739,7 @@ export default function Home() {
       {activeNav === "ИИ-поиск" ? (
         <DiscoveryView />
       ) : activeNav === "Профиль" ? (
-        <ProfileView products={products} palette={palette} profile={profile} syncStatus={syncStatus} syncMessage={syncMessage} onTheme={() => setThemeOpen(true)} />
+        <ProfileView products={products} palette={palette} profile={profile} syncStatus={syncStatus} currency={currency} ratesReady={rates.USD > 0 && rates.EUR > 0} onCurrency={setCurrency} onRefreshAll={refreshAllPrices} onTheme={() => setThemeOpen(true)} />
       ) : activeNav === "Подборки" ? (
         <CollectionsView collections={collections} products={products} onShare={shareCollection} onCreate={() => setCollectionOpen(true)} />
       ) : (
@@ -664,7 +773,7 @@ export default function Home() {
             <div className="section-heading">
               <div>
                 <h2>{activeNav === "Избранное" ? "Сохранённое" : "Мои товары"}</h2>
-                <p>{visibleProducts.length} {visibleProducts.length === 1 ? "товар" : "товара"} · цены в рублях</p>
+                <p>{visibleProducts.length} {visibleProducts.length === 1 ? "товар" : "товара"} · цены в {currency}</p>
               </div>
               <button className="outline-add" onClick={() => setAddOpen(true)}><span>＋</span> Добавить товар</button>
             </div>
@@ -730,10 +839,12 @@ export default function Home() {
       )}
       {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}
     </main>
+    </CurrencyContext.Provider>
   );
 }
 
 function ProductCard({ product, onFavorite, onDelete, onOpen }: { product: Product; onFavorite: (id: number) => void; onDelete: (id: number) => void; onOpen: (product: Product) => void }) {
+  const formatPrice = usePriceFormatter();
   const forecast = forecastFor(product);
   return (
     <article className="product-card" role="button" tabIndex={0} onClick={() => onOpen(product)} onKeyDown={(event) => event.key === "Enter" && onOpen(product)}>
@@ -898,6 +1009,7 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
   );
 }
 function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAddOffer, onDelete }: { product: Product; onClose: () => void; onFavorite: (id: number) => void; onCheck: (id: number) => void; onPeriod: (id: number, period: number) => void; onAddOffer: (id: number, url: string) => void; onDelete: (id: number) => void }) {
+  const formatPrice = usePriceFormatter();
   const [offerInputOpen, setOfferInputOpen] = useState(false);
   const [offerUrl, setOfferUrl] = useState("");
   const forecast = forecastFor(product);
@@ -915,7 +1027,7 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAdd
         </div>
         <div className="detail-price"><div><span>Текущая цена</span><strong>{formatPrice(product.price)}</strong></div><span className={`trend ${product.change <= 0 ? "down" : "up"}`}>{product.change <= 0 ? "↓" : "↑"} {Math.abs(product.change)}%</span></div>
         <div className="chart-card">
-          <div className="chart-labels"><span>7 дней</span><b>{product.change <= 0 ? "−264 ₽" : "+232 ₽"}</b></div>
+          <div className="chart-labels"><span>7 дней</span><b>{product.change <= 0 ? `−${formatPrice(264)}` : `+${formatPrice(232)}`}</b></div>
           <div className="bar-chart" aria-label="График изменения цены за 7 дней">
             {chartValues.map((value, index) => <i key={index} style={{ height: `${value + 18}%` }} />)}
           </div>
@@ -963,6 +1075,7 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAdd
 }
 
 function CollectionsView({ collections, products, onShare, onCreate }: { collections: Collection[]; products: Product[]; onShare: (collection: Collection) => void; onCreate: () => void }) {
+  const formatPrice = usePriceFormatter();
   return (
     <section className="collections-view">
       <div className="collections-title">
@@ -995,6 +1108,7 @@ function CollectionsView({ collections, products, onShare, onCreate }: { collect
 }
 
 function CollectionModal({ products, onClose, onCreate }: { products: Product[]; onClose: () => void; onCreate: (collection: Collection) => void }) {
+  const formatPrice = usePriceFormatter();
   const [name, setName] = useState("");
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [error, setError] = useState("");
@@ -1192,46 +1306,73 @@ function ProfileView({
   palette,
   profile,
   syncStatus,
-  syncMessage,
+  currency,
+  ratesReady,
+  onCurrency,
+  onRefreshAll,
   onTheme,
 }: {
   products: Product[];
   palette: Palette;
   profile: TelegramProfile | null;
   syncStatus: ProfileSyncStatus;
-  syncMessage: string;
+  currency: CurrencyCode;
+  ratesReady: boolean;
+  onCurrency: (currency: CurrencyCode) => void;
+  onRefreshAll: () => void;
   onTheme: () => void;
 }) {
-  const name = profile ? [profile.firstName, profile.lastName].filter(Boolean).join(" ") : "Локальный профиль";
-  const handle = profile?.username ? `@${profile.username}` : profile ? "Вход через Telegram" : "Без облачной синхронизации";
+  const name = profile ? [profile.firstName, profile.lastName].filter(Boolean).join(" ") : "Telegram-профиль";
   const syncLabel = syncStatus === "synced"
-    ? "Сохранено"
+    ? "Синхронизировано"
     : syncStatus === "saving"
       ? "Сохраняем…"
       : syncStatus === "loading"
-        ? "Подключаем…"
+        ? "Подключение…"
         : syncStatus === "error"
-          ? "Нужна настройка"
-          : "Только на устройстве";
+          ? "Ошибка синхронизации"
+          : "";
 
   return (
     <section className="profile-view">
       <div className="profile-card">
         <div className="profile-avatar">{name.slice(0, 1).toLocaleUpperCase("ru")}</div>
-        <div><p>{profile ? "Telegram-профиль" : "Локальный режим"}</p><h1>{name}</h1><span>{handle}</span></div>
-        <span className={`profile-sync-badge ${syncStatus}`}>{syncLabel}</span>
+        <div className="profile-identity">
+          <p>TELEGRAM ACCOUNT</p>
+          <h1>{name}</h1>
+          <div className="profile-meta">
+            {profile?.username && <span>@{profile.username}</span>}
+            {profile?.id && <span>ID {profile.id}</span>}
+          </div>
+        </div>
+        {syncLabel && <span className={`profile-sync-badge ${syncStatus}`}>{syncLabel}</span>}
       </div>
-      <p className={`profile-sync-note ${syncStatus}`}>{syncMessage}</p>
       <div className="settings-card">
         <h2>Мониторинг</h2>
         <div className="setting-row"><span>Активных товаров</span><b>{products.length}</b></div>
-        <div className="setting-row"><span>Память профиля</span><b className={syncStatus === "synced" ? "status-on" : "status-warn"}>{syncLabel}</b></div>
-        <div className="setting-row"><span>Авторизация</span><b>{profile ? "Telegram · без e-mail" : "Откройте через бота"}</b></div>
-        <div className="setting-row"><span>Валюта</span><b>RUB</b></div>
+        <div className="setting-row currency-setting">
+          <span>Валюта</span>
+          <div className="currency-switch" aria-label="Валюта отображения">
+            {(["RUB", "USD", "EUR"] as CurrencyCode[]).map((code) => (
+              <button
+                type="button"
+                key={code}
+                className={currency === code ? "active" : ""}
+                disabled={code !== "RUB" && !ratesReady}
+                onClick={() => onCurrency(code)}
+              >
+                {code}
+              </button>
+            ))}
+          </div>
+        </div>
         <button className="setting-row theme-setting" onClick={onTheme}><span>Цветовая палитра</span><b><i style={{ background: palette.accent }} /><i style={{ background: palette.accent2 }} /><i style={{ background: palette.accent3 }} /> {palette.name} →</b></button>
       </div>
       <div className="settings-card">
-        <h2>Новые возможности</h2>
+        <div className="features-heading"><h2>Новые возможности</h2><span>ОБНОВЛЕНО</span></div>
+        <button className="idea-row feature-action" type="button" onClick={onRefreshAll}>
+          <span>↻</span><p><b>Обновить все цены</b><small>Проверить поддерживаемые товары прямо сейчас</small></p><i>→</i>
+        </button>
         <div className="idea-row enabled"><span>↯</span><p><b>Сравнение магазинов</b><small>Добавляйте предложения прямо в карточке</small></p><i>✓</i></div>
         <div className="idea-row enabled"><span>↘</span><p><b>Прогноз выгодной цены</b><small>Рекомендация на основе истории и тренда</small></p><i>✓</i></div>
         <div className="idea-row enabled"><span>⇧</span><p><b>Общие подборки</b><small>Сохраняются отдельно в каждом Telegram-профиле</small></p><i>✓</i></div>

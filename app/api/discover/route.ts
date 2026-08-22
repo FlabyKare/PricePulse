@@ -1,5 +1,3 @@
-import { env } from "cloudflare:workers";
-
 type WebResult = { title: string; url: string; description: string };
 type AiDraft = { name: string; description: string };
 type RuntimeEnv = { OPENROUTER_API_KEY?: string; OPENROUTER_MODEL?: string; WEBAPP_URL?: string };
@@ -76,7 +74,7 @@ function openRouterContent(payload: unknown) {
 }
 
 async function openRouterDrafts(query: string, suggestions: string[], results: WebResult[]): Promise<AiDraft[]> {
-  const runtime = env as unknown as RuntimeEnv;
+  const runtime = process.env as RuntimeEnv;
   const apiKey = runtime.OPENROUTER_API_KEY?.trim();
   if (!apiKey) return [];
 

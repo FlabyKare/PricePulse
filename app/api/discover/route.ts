@@ -249,8 +249,9 @@ function recommendations(query: string, suggestions: string[], results: WebResul
   const resultNames = results.filter((result) => /lis-skins\.com\/market\/csgo/i.test(result.url)).map((result) => productName(result.title));
   const names = Array.from(new Set([...resultNames, ...aiDrafts.map((draft) => draft.name), productName(query), ...suggestions])).filter(Boolean).slice(0, 6);
   return names.map((name, index) => {
-    const matches = [...results].map((result) => ({ result, score: matchScore(name, result) }))
-      .filter(({ score }) => score > 0).sort((a, b) => b.score - a.score).slice(0, 3).map(({ result }) => result);
+    const rankedResults = [...results].map((result) => ({ result, score: matchScore(name, result) })).sort((a, b) => b.score - a.score);
+    const positiveMatches = rankedResults.filter(({ score }) => score > 0);
+    const matches = (positiveMatches.length ? positiveMatches : rankedResults.slice(0, 1)).slice(0, 3).map(({ result }) => result);
     const match = matches[0];
     const text = `${match?.title ?? ""} ${match?.description ?? ""}`;
     const aiDescription = aiDrafts.find((draft) => draft.name === name)?.description;
@@ -294,7 +295,7 @@ export async function POST(request: Request) {
     intent,
     summary: aiDrafts.length
       ? "OpenRouter собрал товарную подборку, а PricePulse добавил проверяемые ссылки на магазины и обзоры."
-      : intent === "cs2" && webResults.some((result) => /lis-skins\\.com/i.test(result.url))
+      : intent === "cs2" && webResults.some((result) => /lis-skins\.com/i.test(result.url))
         ? "PricePulse распознал CS2-контекст и нашёл подходящие позиции в актуальном каталоге LIS-SKINS и профильных маркетах."
         : webResults.length
           ? "AI-поиск сопоставил популярные запросы, цены и обзоры из открытых источников."

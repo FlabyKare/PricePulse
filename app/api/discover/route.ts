@@ -2,6 +2,12 @@ type WebResult = { title: string; url: string; description: string };
 type AiDraft = { name: string; description: string };
 type RuntimeEnv = { OPENROUTER_API_KEY?: string; OPENROUTER_MODEL?: string; WEBAPP_URL?: string };
 type Source = { title: string; url: string; kind: "магазин" | "обзор" | "поиск" };
+type SearchIntent = "cs2" | "electronics" | "beauty" | "fashion" | "home" | "auto" | "general";
+type LisCatalogueItem = { name: string; price: number; url: string; count?: number };
+
+const LIS_EXPORT_URL = "https://lis-skins.com/market_export_json/csgo.json";
+const LIS_CACHE_TTL_MS = 5 * 60 * 1000;
+let lisCatalogueCache: { items: LisCatalogueItem[]; expiresAt: number } | null = null;
 
 function safeUrl(value: unknown) {
   if (typeof value !== "string") return null;
@@ -44,9 +50,30 @@ async function suggestionsFor(query: string) {
   } catch { return []; }
 }
 
-async function aiResultsFor(query: string): Promise<WebResult[]> {
+function inferIntent(query: string): SearchIntent {
+  if (/cs\s*2|csgo|counter.?strike|скин|sticker|наклейк|глок|glock|ak-?47|m4a[14]|awp|нож|перчатк/i.test(query)) return "cs2";
+  if (/телефон|смартфон|ноутбук|наушник|телевизор|монитор|планшет|камера|процессор|видеокарт|электрон/i.test(query)) return "electronics";
+  if (/косметик|духи|парфюм|крем|шампун|макияж|сыворотк/i.test(query)) return "beauty";
+  if (/одежд|обув|кроссов|куртк|плать|джинс|сумк/i.test(query)) return "fashion";
+  if (/мебел|кресл|стол|матрас|пылесос|кофемашин|холодильник|дом/i.test(query)) return "home";
+  if (/авто|машин|шины|диск|запчаст|масло мотор/i.test(query)) return "auto";
+  return "general";
+}
+
+function searchContext(intent: SearchIntent) {
+  if (intent === "cs2") return "LIS-SKINS Steam Community Market CSFloat DMarket Market.CSGO";
+  if (intent === "electronics") return "Яндекс Маркет Ozon DNS М.Видео Ситилинк";
+  if (intent === "beauty") return "Золотое Яблоко Лэтуаль Ozon Яндекс Маркет";
+  if (intent === "fashion") return "Lamoda Ozon Wildberries Яндекс Маркет";
+  if (intent === "home") return "Яндекс Маркет Ozon Wildberries Hoff ВсеИнструменты";
+  if (intent === "auto") return "Яндекс Маркет Avito Exist Emex Autodoc";
+  return "Яндекс Маркет Ozon Wildberries Avito отзывы";
+}
+
+async function aiResultsFor(query: string, intent: SearchIntent): Promise<WebResult[]> {
   try {
-    const response = await fetch(`https://s.jina.ai/${encodeURIComponent(query + " купить цена отзывы обзор")}`, {
+    const searchQuery = `${query} купить цена отзывы ${searchContext(intent)}`;
+    const response = await fetch(`https://s.jina.ai/${encodeURIComponent(searchQuery)}`, {
       headers: { accept: "application/json", "x-retain-images": "none" }, cache: "no-store",
     });
     if (!response.ok) return [];
@@ -58,6 +85,54 @@ async function aiResultsFor(query: string): Promise<WebResult[]> {
       const rawDescription = typeof item.description === "string" ? item.description : typeof item.content === "string" ? item.content : "";
       return url && title ? [{ title, url, description: clean(rawDescription).slice(0, 420) }] : [];
     }).slice(0, 8);
+  } catch { return []; }
+}
+
+function lisTokens(query: string) {
+  const translated = query.toLocaleLowerCase("ru")
+    .replace(/кс\s*2|ксго|counter.?strike|csgo/g, " cs2 ")
+    .replace(/глок(?:а|ом|у)?/g, " glock-18 ")
+    .replace(/розов\p{L}*/gu, " pink ")
+    .replace(/золот\p{L}*/gu, " gold ")
+    .replace(/фиолетов\p{L}*/gu, " purple ")
+    .replace(/красн\p{L}*/gu, " red ")
+    .replace(/син\p{L}*/gu, " blue ");
+  const stopWords = new Set(["cs2", "skin", "skins", "скин", "новый", "новая", "новое", "новой", "коллекция", "коллекции", "из", "для", "the", "and"]);
+  return translated.split(/[^\p{L}\p{N}]+/u).filter((token) => token.length > 1 && !stopWords.has(token));
+}
+
+async function lisResultsFor(query: string): Promise<WebResult[]> {
+  try {
+    let items = lisCatalogueCache?.expiresAt && lisCatalogueCache.expiresAt > Date.now() ? lisCatalogueCache.items : null;
+    if (!items) {
+      const response = await fetch(LIS_EXPORT_URL, { headers: { accept: "application/json" }, cache: "no-store" });
+      if (!response.ok) return [];
+      const payload = await response.json() as unknown;
+      if (!Array.isArray(payload)) return [];
+      items = payload.flatMap((entry) => {
+        if (!entry || typeof entry !== "object") return [];
+        const item = entry as Record<string, unknown>;
+        const url = safeUrl(item.url);
+        return typeof item.name === "string" && typeof item.price === "number" && url
+          ? [{ name: clean(item.name), price: item.price, url, count: typeof item.count === "number" ? item.count : 0 }]
+          : [];
+      });
+      lisCatalogueCache = { items, expiresAt: Date.now() + LIS_CACHE_TTL_MS };
+    }
+    const tokens = lisTokens(query);
+    if (!tokens.length) return [];
+    return items.map((item) => {
+      const haystack = item.name.toLocaleLowerCase("en");
+      const score = tokens.reduce((sum, token) => sum + (haystack.includes(token) ? (token.includes("glock") || token === "pink" ? 3 : 1) : 0), 0);
+      return { item, score };
+    }).filter(({ score }) => score > 0)
+      .sort((a, b) => b.score - a.score || (b.item.count ?? 0) - (a.item.count ?? 0))
+      .slice(0, 5)
+      .map(({ item }) => ({
+        title: item.name,
+        url: item.url,
+        description: `LIS-SKINS: ${item.price.toFixed(2)} · предложений ${item.count ?? 0}`,
+      }));
   } catch { return []; }
 }
 
@@ -125,17 +200,41 @@ async function openRouterDrafts(query: string, suggestions: string[], results: W
   }
 }
 
-function directSources(name: string, cs2: boolean): Source[] {
+function directSources(name: string, intent: SearchIntent): Source[] {
   const encoded = encodeURIComponent(name);
-  if (cs2) return [
+  if (intent === "cs2") return [
     { title: "Steam Community Market", url: `https://steamcommunity.com/market/search?appid=730&q=${encoded}`, kind: "магазин" },
-    { title: "Market.CSGO", url: `https://market.csgo.com/en/${encoded}`, kind: "магазин" },
-    { title: "Отзывы и сравнения", url: `https://www.google.com/search?q=${encodeURIComponent(name + " отзывы цена")}`, kind: "обзор" },
+    { title: "Найти на LIS-SKINS", url: `https://www.google.com/search?q=${encodeURIComponent(`site:lis-skins.com/market/csgo ${name}`)}`, kind: "поиск" },
+    { title: "CSFloat", url: `https://csfloat.com/search?market_hash_name=${encoded}`, kind: "магазин" },
+    { title: "DMarket", url: `https://dmarket.com/ingame-items/item-list/csgo-skins?title=${encoded}`, kind: "магазин" },
+    { title: "Market.CSGO", url: `https://market.csgo.com/en/?search=${encoded}`, kind: "магазин" },
+  ];
+  if (intent === "electronics") return [
+    { title: "Яндекс Маркет", url: `https://market.yandex.ru/search?text=${encoded}`, kind: "магазин" },
+    { title: "Ozon", url: `https://www.ozon.ru/search/?text=${encoded}`, kind: "магазин" },
+    { title: "DNS", url: `https://www.dns-shop.ru/search/?q=${encoded}`, kind: "магазин" },
+    { title: "М.Видео", url: `https://www.mvideo.ru/product-list-page?q=${encoded}`, kind: "магазин" },
+  ];
+  if (intent === "beauty") return [
+    { title: "Золотое Яблоко", url: `https://goldapple.ru/catalogsearch/result?q=${encoded}`, kind: "магазин" },
+    { title: "Лэтуаль", url: `https://www.letu.ru/search?text=${encoded}`, kind: "магазин" },
+    { title: "Ozon", url: `https://www.ozon.ru/search/?text=${encoded}`, kind: "магазин" },
+  ];
+  if (intent === "fashion") return [
+    { title: "Lamoda", url: `https://www.lamoda.ru/catalogsearch/result/?q=${encoded}`, kind: "магазин" },
+    { title: "Wildberries", url: `https://www.wildberries.ru/catalog/0/search.aspx?search=${encoded}`, kind: "магазин" },
+    { title: "Ozon", url: `https://www.ozon.ru/search/?text=${encoded}`, kind: "магазин" },
+  ];
+  if (intent === "auto") return [
+    { title: "Exist", url: `https://exist.ru/Price/?pcode=${encoded}`, kind: "магазин" },
+    { title: "Emex", url: `https://emex.ru/f?detailNum=${encoded}`, kind: "магазин" },
+    { title: "Avito", url: `https://www.avito.ru/rossiya?q=${encoded}`, kind: "магазин" },
   ];
   return [
     { title: "Яндекс Маркет", url: `https://market.yandex.ru/search?text=${encoded}`, kind: "магазин" },
     { title: "Ozon", url: `https://www.ozon.ru/search/?text=${encoded}`, kind: "магазин" },
     { title: "Wildberries", url: `https://www.wildberries.ru/catalog/0/search.aspx?search=${encoded}`, kind: "магазин" },
+    { title: "Avito", url: `https://www.avito.ru/rossiya?q=${encoded}`, kind: "магазин" },
     { title: "Отзывы и обзоры", url: `https://www.google.com/search?q=${encodeURIComponent(name + " отзывы обзор")}`, kind: "обзор" },
   ];
 }
@@ -146,19 +245,26 @@ function matchScore(name: string, result: WebResult) {
 }
 
 function recommendations(query: string, suggestions: string[], results: WebResult[], aiDrafts: AiDraft[] = []) {
-  const names = Array.from(new Set([...aiDrafts.map((draft) => draft.name), productName(query), ...suggestions])).filter(Boolean).slice(0, 6);
-  const cs2 = /cs2|csgo|counter.?strike|скин|sticker|ak-47|m4a1|awp/i.test(query);
+  const intent = inferIntent(query);
+  const resultNames = results.filter((result) => /lis-skins\.com\/market\/csgo/i.test(result.url)).map((result) => productName(result.title));
+  const names = Array.from(new Set([...resultNames, ...aiDrafts.map((draft) => draft.name), productName(query), ...suggestions])).filter(Boolean).slice(0, 6);
   return names.map((name, index) => {
-    const match = [...results].sort((a, b) => matchScore(name, b) - matchScore(name, a))[0];
+    const matches = [...results].map((result) => ({ result, score: matchScore(name, result) }))
+      .filter(({ score }) => score > 0).sort((a, b) => b.score - a.score).slice(0, 3).map(({ result }) => result);
+    const match = matches[0];
     const text = `${match?.title ?? ""} ${match?.description ?? ""}`;
     const aiDescription = aiDrafts.find((draft) => draft.name === name)?.description;
-    const webSource: Source[] = match ? [{ title: labelFromUrl(match.url), url: match.url, kind: /review|обзор|отзыв/i.test(text) ? "обзор" : "поиск" }] : [];
-    const sources = [...webSource, ...directSources(name, cs2)].filter((source, position, all) => all.findIndex((item) => item.url === source.url) === position).slice(0, 5);
+    const webSources: Source[] = matches.map((result) => ({
+      title: /lis-skins\.com/i.test(result.url) ? `LIS-SKINS · ${result.title}` : labelFromUrl(result.url),
+      url: result.url,
+      kind: /review|обзор|отзыв/i.test(`${result.title} ${result.description}`) ? "обзор" : "магазин",
+    }));
+    const sources = [...webSources, ...directSources(name, intent)].filter((source, position, all) => all.findIndex((item) => item.url === source.url) === position).slice(0, 6);
     return {
       id: `discover-${index}-${encodeURIComponent(name).slice(0, 24)}`, name,
       description: aiDescription || match?.description?.slice(0, 210) || "Сравните актуальные цены и отзывы в нескольких источниках перед покупкой.",
       priceLabel: priceFrom(text), ratingLabel: ratingFrom(text),
-      popularity: index === 0 ? "Чаще всего ищут" : index < 3 ? "Популярный вариант" : "Ещё один вариант",
+      popularity: index === 0 ? "Точное совпадение" : index < 3 ? "Популярный вариант" : "Ещё один вариант",
       sourceCount: sources.length, sources,
     };
   });
@@ -172,18 +278,27 @@ export async function POST(request: Request) {
   if (query.length < 2 || query.length > 120) return Response.json({ error: "Запрос должен содержать от 2 до 120 символов" }, { status: 400 });
   if (/@|(?:\+?\d[\s()-]*){10,}/.test(query)) return Response.json({ error: "Не добавляйте в поисковый запрос телефон или e-mail" }, { status: 400 });
 
-  const [suggestionResult, webResult] = await Promise.allSettled([suggestionsFor(query), aiResultsFor(query)]);
+  const intent = inferIntent(query);
+  const [suggestionResult, webResult, lisResult] = await Promise.allSettled([
+    suggestionsFor(query), aiResultsFor(query, intent), intent === "cs2" ? lisResultsFor(query) : Promise.resolve([]),
+  ]);
   const suggestions = suggestionResult.status === "fulfilled" ? suggestionResult.value : [];
-  const webResults = webResult.status === "fulfilled" ? webResult.value : [];
+  const webResults = [
+    ...(lisResult.status === "fulfilled" ? lisResult.value : []),
+    ...(webResult.status === "fulfilled" ? webResult.value : []),
+  ].filter((result, position, all) => all.findIndex((item) => item.url === result.url) === position);
   const aiDrafts = await openRouterDrafts(query, suggestions, webResults);
   return Response.json({
     query,
     engine: aiDrafts.length ? "openrouter" : webResults.length ? "ai-web" : "smart-search",
+    intent,
     summary: aiDrafts.length
       ? "OpenRouter собрал товарную подборку, а PricePulse добавил проверяемые ссылки на магазины и обзоры."
-      : webResults.length
-        ? "AI-поиск сопоставил популярные запросы, цены и обзоры из открытых источников."
-        : "Собраны популярные варианты и прямые ссылки для сравнения.",
+      : intent === "cs2" && webResults.some((result) => /lis-skins\\.com/i.test(result.url))
+        ? "PricePulse распознал CS2-контекст и нашёл подходящие позиции в актуальном каталоге LIS-SKINS и профильных маркетах."
+        : webResults.length
+          ? "AI-поиск сопоставил популярные запросы, цены и обзоры из открытых источников."
+          : "Собраны популярные варианты и прямые ссылки для сравнения.",
     products: recommendations(query, suggestions, webResults, aiDrafts),
   }, { headers: { "cache-control": "no-store" } });
 }

@@ -39,9 +39,11 @@ test("server-renders the PricePulse product", async () => {
 });
 
 test("removes the temporary starter preview", async () => {
-  const [css, page, layout, packageJson] = await Promise.all([
+  const [css, page, aiViews, discoverRoute, layout, packageJson] = await Promise.all([
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/ai-views.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/discover/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
@@ -50,9 +52,12 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /localStorage/);
   assert.match(page, /deleteProduct/);
   assert.match(page, /ИИ-поиск/);
-  assert.match(page, /enterKeyHint="search"/);
-  assert.match(page, /Разрешить и найти/);
-  assert.match(page, /pricepulse-external-search-consent/);
+  assert.match(aiViews, /enterKeyHint="search"/);
+  assert.match(aiViews, /Разрешить и продолжить/);
+  assert.match(aiViews, /pricepulse-external-search-consent/);
+  assert.match(aiViews, /AI-КОНСУЛЬТАНТ ПО ПОКУПКЕ/);
+  assert.match(aiViews, /РЫНОЧНЫЙ РАДАР/);
+  assert.match(page, /InvestmentsView/);
   assert.match(page, /x-telegram-init-data/);
   assert.match(page, /TELEGRAM ACCOUNT/);
   assert.match(page, /pricepulse-currency/);
@@ -63,8 +68,10 @@ test("removes the temporary starter preview", async () => {
   assert.match(css, /\.primary-button[^}]*display:\s*inline-flex/s);
   assert.match(css, /currency-switch/);
   assert.match(css, /\.discovery-search input[^}]*font-size:\s*16px/s);
-  assert.match(page, /steamcommunity\.com\/market\/search\?appid=730/);
-  assert.match(page, /market\.csgo\.com\/en/);
+  assert.match(discoverRoute, /steamcommunity\.com\/market\/search\?appid=730/);
+  assert.match(discoverRoute, /lis-skins\.com\/market_export_json\/csgo\.json/);
+  assert.match(discoverRoute, /csfloat\.com\/search/);
+  assert.match(discoverRoute, /market\.csgo\.com\/en/);
   assert.match(layout, /title: "PricePulse/);
   assert.match(css, /prefers-reduced-motion/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);

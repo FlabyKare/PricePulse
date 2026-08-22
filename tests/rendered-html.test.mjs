@@ -50,6 +50,10 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /localStorage/);
   assert.match(page, /deleteProduct/);
   assert.match(page, /ИИ-поиск/);
+  assert.match(page, /enterKeyHint="search"/);
+  assert.match(page, /Разрешить и найти/);
+  assert.match(page, /pricepulse-external-search-consent/);
+  assert.match(css, /\.discovery-search input[^}]*font-size:\s*16px/s);
   assert.match(page, /steamcommunity\.com\/market\/search\?appid=730/);
   assert.match(page, /market\.csgo\.com\/en/);
   assert.match(layout, /title: "PricePulse/);

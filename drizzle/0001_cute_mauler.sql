@@ -1,0 +1,1 @@
+ALTER TABLE `profile_states` ADD `currency` text DEFAULT 'RUB' NOT NULL;

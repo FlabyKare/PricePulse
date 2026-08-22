@@ -3,6 +3,7 @@
 import type { CSSProperties } from "react";
 import { createContext, FormEvent, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { isLisSkinsUrl } from "@/lib/lis-skins";
+import { InvestmentsView, SmartDiscoveryView } from "./ai-views";
 
 type Offer = {
   id: string;
@@ -39,31 +40,6 @@ type ResolvedLisProduct = {
   exchangeRate: number;
   count: number;
   approximate: boolean;
-};
-
-type DiscoverySource = {
-  title: string;
-  url: string;
-  kind: "магазин" | "обзор" | "поиск";
-};
-
-type DiscoveryProduct = {
-  id: string;
-  name: string;
-  description: string;
-  priceLabel: string;
-  ratingLabel: string;
-  popularity: string;
-  sourceCount: number;
-  sources: DiscoverySource[];
-};
-
-type DiscoveryResponse = {
-  query: string;
-  engine: "openrouter" | "ai-web" | "smart-search";
-  summary: string;
-  products: DiscoveryProduct[];
-  error?: string;
 };
 
 type Collection = {
@@ -737,7 +713,9 @@ export default function Home() {
       )}
 
       {activeNav === "ИИ-поиск" ? (
-        <DiscoveryView />
+        <SmartDiscoveryView products={products} />
+      ) : activeNav === "Инвестиции" ? (
+        <InvestmentsView />
       ) : activeNav === "Профиль" ? (
         <ProfileView products={products} palette={palette} profile={profile} syncStatus={syncStatus} currency={currency} ratesReady={rates.USD > 0 && rates.EUR > 0} onCurrency={setCurrency} onRefreshAll={refreshAllPrices} onTheme={() => setThemeOpen(true)} />
       ) : activeNav === "Подборки" ? (
@@ -811,6 +789,7 @@ export default function Home() {
           ["Подборки", "▦"],
           ["Добавить", "+"],
           ["ИИ-поиск", "✦"],
+          ["Инвестиции", "↗"],
           ["Избранное", "♡"],
         ].map(([item, icon]) => (
           <button key={item} className={`${activeNav === item ? "current" : ""} ${item === "Добавить" ? "nav-add" : ""}`} onClick={() => changeNav(item)} aria-label={item}>
@@ -1165,142 +1144,6 @@ function ThemeModal({ palette, onApply, onClose }: { palette: Palette; onApply: 
   );
 }
 
-function DiscoveryView() {
-  const [query, setQuery] = useState("");
-  const [consent, setConsent] = useState(false);
-  const [consentOpen, setConsentOpen] = useState(false);
-  const [pendingQuery, setPendingQuery] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [summary, setSummary] = useState("");
-  const [results, setResults] = useState<DiscoveryProduct[]>([]);
-  const [selected, setSelected] = useState<DiscoveryProduct | null>(null);
-  const prompts = ["Наушники до 20 000 ₽", "Робот-пылесос", "Телефон до 50 000 ₽", "Популярные скины CS2"];
-  const consentStorageKey = "pricepulse-external-search-consent";
-
-  useEffect(() => {
-    setConsent(window.localStorage.getItem(consentStorageKey) === "true");
-  }, []);
-
-  async function searchProducts(value = query, consentGranted = consent) {
-    const finalQuery = value.trim();
-    if (finalQuery.length < 2) { setError("Опишите, какой товар хотите найти"); return; }
-    if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
-      document.activeElement.blur();
-    }
-    if (!consentGranted) {
-      setQuery(finalQuery);
-      setPendingQuery(finalQuery);
-      setConsentOpen(true);
-      setError("");
-      return;
-    }
-    setQuery(finalQuery); setLoading(true); setError("");
-    try {
-      const response = await fetch("/api/discover", {
-        method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ query: finalQuery, externalSearchConsent: true }),
-      });
-      const body = await response.json() as DiscoveryResponse;
-      if (!response.ok) throw new Error(body.error || "Не удалось выполнить поиск");
-      setResults(body.products); setSummary(body.summary);
-    } catch (searchError) {
-      setError(searchError instanceof Error ? searchError.message : "Не удалось выполнить поиск");
-    } finally { setLoading(false); }
-  }
-
-  function approveExternalSearch() {
-    const queuedQuery = pendingQuery || query.trim();
-    setConsent(true);
-    window.localStorage.setItem(consentStorageKey, "true");
-    setConsentOpen(false);
-    setPendingQuery("");
-    void searchProducts(queuedQuery, true);
-  }
-
-  return (
-    <section className="discovery-view">
-      <div className="discovery-hero">
-        <div className="ai-orb">✦</div>
-        <p className="eyebrow">AI-ПОИСК ПО ТОВАРАМ И ОТЗЫВАМ</p>
-        <h1>Найдём популярное и сравним источники.</h1>
-        <p className="discovery-lead">Опишите товар, бюджет или задачу. Умный поиск соберёт варианты, отзывы и прямые ссылки на магазины.</p>
-        <form className="discovery-search" onSubmit={(event) => { event.preventDefault(); void searchProducts(); }}>
-          <input type="search" inputMode="search" enterKeyHint="search" autoComplete="off" value={query} onChange={(event) => { setQuery(event.target.value); setError(""); }} placeholder="Например: беспроводные наушники до 20 000 ₽" aria-label="Запрос для AI-поиска" />
-          <button type="submit" disabled={loading}>{loading ? "Ищем…" : "Найти"} <span>→</span></button>
-        </form>
-        <p className="search-privacy-note"><span>✓</span> Первый поиск попросит разрешение передать только текст запроса. Выбор сохранится на этом устройстве.</p>
-        <div className="prompt-chips">{prompts.map((prompt) => <button type="button" key={prompt} onClick={() => { setQuery(prompt); void searchProducts(prompt); }}>{prompt}</button>)}</div>
-        {error && <p className="discovery-error" role="alert">{error}</p>}
-      </div>
-
-      {consentOpen && (
-        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setConsentOpen(false)}>
-          <section className="modal search-consent-modal" role="dialog" aria-modal="true" aria-labelledby="search-consent-title">
-            <div className="modal-handle" />
-            <button className="modal-close" onClick={() => setConsentOpen(false)} aria-label="Закрыть">×</button>
-            <div className="modal-kicker"><span>✦</span> РАЗРЕШЕНИЕ НА AI-ПОИСК</div>
-            <h2 id="search-consent-title">Разрешить поиск по интернету?</h2>
-            <p className="modal-lead">Чтобы найти товары, PricePulse передаст только текст запроса сервисам Jina AI, Google и OpenRouter, если он подключён.</p>
-            <div className="consent-points">
-              <p><span>✓</span><b>Отправится:</b> запрос «{pendingQuery || query}»</p>
-              <p><span>×</span><b>Не отправятся:</b> профиль Telegram, карточки и избранное</p>
-            </div>
-            <p className="consent-memory">Разрешение сохранится на этом устройстве. Его можно сбросить, очистив данные мини-приложения.</p>
-            <div className="consent-actions">
-              <button type="button" className="primary-button" onClick={approveExternalSearch}>Разрешить и найти <span>→</span></button>
-              <button type="button" className="secondary-button" onClick={() => { setConsentOpen(false); setPendingQuery(""); }}>Отмена</button>
-            </div>
-          </section>
-        </div>
-      )}
-
-      <div className="discovery-results-head">
-        <div><h2>{results.length ? "AI-подборка" : "Начните с запроса"}</h2><p>{summary || "Карточки появятся здесь — нажмите на любую, чтобы увидеть несколько источников."}</p></div>
-        {results.length > 0 && <span>{results.length} вариантов</span>}
-      </div>
-      {loading ? (
-        <div className="discovery-loading"><span>✦</span><p>Сопоставляем популярность, отзывы и цены…</p></div>
-      ) : results.length > 0 ? (
-        <div className="discovery-grid">
-          {results.map((item, index) => (
-            <button className="discovery-card" key={item.id} onClick={() => setSelected(item)}>
-              <div className={`discovery-art art-${index % 3}`}><span>{item.name.split(/\s+/).slice(0, 2).map((word) => word[0]).join("").toUpperCase()}</span><i>✦ AI</i></div>
-              <div className="discovery-card-body">
-                <span className="popularity-badge">{item.popularity}</span>
-                <h3>{item.name}</h3>
-                <p>{item.description}</p>
-                <div className="discovery-meta"><b>{item.priceLabel}</b><span>★ {item.ratingLabel}</span></div>
-                <div className="discovery-open"><span>{item.sourceCount} источника</span><b>Сравнить →</b></div>
-              </div>
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div className="discovery-empty"><span>⌕</span><h3>Что хотите подобрать?</h3><p>Можно написать категорию, бюджет, бренд или задачу.</p></div>
-      )}
-
-      {selected && (
-        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSelected(null)}>
-          <section className="modal discovery-modal" role="dialog" aria-modal="true" aria-labelledby="discovery-title">
-            <div className="modal-handle" /><button className="modal-close" onClick={() => setSelected(null)} aria-label="Закрыть">×</button>
-            <div className="modal-kicker"><span>✦</span> ИСТОЧНИКИ AI-ПОДБОРКИ</div>
-            <h2 id="discovery-title">{selected.name}</h2>
-            <p className="modal-lead">{selected.description}</p>
-            <div className="source-list">
-              {selected.sources.map((source, index) => (
-                <a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer">
-                  <span>{index + 1}</span><div><small>{source.kind}</small><b>{source.title}</b></div><i>↗</i>
-                </a>
-              ))}
-            </div>
-            <p className="source-note">Цены и наличие меняются. Проверяйте итоговую стоимость на странице магазина.</p>
-          </section>
-        </div>
-      )}
-    </section>
-  );
-}
 function ProfileView({
   products,
   palette,

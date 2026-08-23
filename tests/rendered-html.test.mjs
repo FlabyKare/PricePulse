@@ -70,6 +70,11 @@ test("removes the temporary starter preview", async () => {
   assert.match(css, /profile-sync-badge/);
   assert.match(css, /\.primary-button[^}]*display:\s*inline-flex/s);
   assert.match(css, /currency-switch/);
+  assert.match(css, /\\.app-shell[^}]*color:\\s*var\\(--ink\\)/s);
+  assert.match(css, /--surface:\\s*#151713/);
+  assert.match(css, /background:\\s*var\\(--preview-surface\\)/);
+  assert.match(page, /"--surface": palette\\.surface/);
+  assert.match(page, /"--muted": \`color-mix/);
   assert.match(css, /\.discovery-search input[^}]*font-size:\s*16px/s);
   assert.match(discoverRoute, /steamcommunity\.com\/market\/search\?appid=730/);
   assert.match(discoverRoute, /lis-skins\.com\/market_export_json\/csgo\.json/);

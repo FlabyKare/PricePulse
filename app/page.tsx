@@ -408,8 +408,15 @@ export default function Home() {
         });
         const body = await response.json() as ProfileApiResponse;
         if (!response.ok || !body.profile) throw new Error(body.error || "Не удалось войти через Telegram");
-        setProfile(body.profile);
-        window.localStorage.setItem("pricepulse-telegram-profile", JSON.stringify(body.profile));
+        setProfile((current) => {
+          const mergedProfile: TelegramProfile = {
+            ...body.profile!,
+            username: body.profile!.username ?? current?.username ?? null,
+            photoUrl: body.profile!.photoUrl ?? current?.photoUrl ?? null,
+          };
+          window.localStorage.setItem("pricepulse-telegram-profile", JSON.stringify(mergedProfile));
+          return mergedProfile;
+        });
         if (body.state) {
           setProducts(body.state.products.map(normalizeProduct));
           setCollections(body.state.collections);

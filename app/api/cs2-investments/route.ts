@@ -1,5 +1,4 @@
 import { and, asc, gte, inArray, lt } from "drizzle-orm";
-import { getDb } from "@/db";
 import { cs2MarketSnapshots } from "@/db/schema";
 
 type LisItem = { name: string; price: number; unlocked_price?: number; url: string; count: number };
@@ -122,6 +121,7 @@ async function historyFor(keys: string[]) {
   if (!keys.length) return result;
   try {
     const since = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const { getDb } = await import("@/db");
     const db = getDb();
     const rows = await db.select({ itemKey: cs2MarketSnapshots.itemKey, priceUsd: cs2MarketSnapshots.priceUsd, capturedAt: cs2MarketSnapshots.capturedAt })
       .from(cs2MarketSnapshots)
@@ -134,6 +134,7 @@ async function historyFor(keys: string[]) {
 
 async function persistSnapshots(items: Array<{ item: LisItem; type: ItemType }>) {
   try {
+    const { getDb } = await import("@/db");
     const db = getDb();
     const bucket = Math.floor(Date.now() / 1000 / SNAPSHOT_BUCKET_SECONDS);
     await db.insert(cs2MarketSnapshots).values(items.map(({ item, type }) => ({

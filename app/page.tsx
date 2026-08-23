@@ -53,6 +53,7 @@ type Palette = {
   name: string;
   paper: string;
   ink: string;
+  surface?: string;
   card: string;
   accent: string;
   accent2: string;
@@ -197,12 +198,12 @@ const initialCollections: Collection[] = [
 ];
 
 const palettes: Palette[] = [
-  { id: "pulse", name: "Pulse", paper: "#f4f3ee", ink: "#151713", card: "#ffffff", accent: "#dfff54", accent2: "#b997e7", accent3: "#64bfd2" },
-  { id: "sunset", name: "Sunset", paper: "#fff4ed", ink: "#281b1b", card: "#fffdf9", accent: "#ff7a4d", accent2: "#ffd166", accent3: "#8e79d9" },
-  { id: "ocean", name: "Ocean", paper: "#eef6f8", ink: "#12272f", card: "#ffffff", accent: "#42d6c3", accent2: "#6ea8fe", accent3: "#a78bfa" },
-  { id: "berry", name: "Berry", paper: "#faf0f6", ink: "#2c1726", card: "#fffafd", accent: "#ff5c9a", accent2: "#b58cff", accent3: "#ffb45c" },
-  { id: "ice", name: "Ice", paper: "#f2f7ff", ink: "#10233d", card: "#ffffff", accent: "#79d6ff", accent2: "#7c8cff", accent3: "#b7f171" },
-  { id: "sand", name: "Sand", paper: "#f8f1e3", ink: "#292318", card: "#fffdf7", accent: "#e7a94b", accent2: "#7fb7a5", accent3: "#d27b78" },
+  { id: "pulse", name: "Pulse", paper: "#f4f3ee", ink: "#151713", surface: "#151713", card: "#ffffff", accent: "#dfff54", accent2: "#b997e7", accent3: "#64bfd2" },
+  { id: "sunset", name: "Sunset", paper: "#fff4ed", ink: "#281b1b", surface: "#281b1b", card: "#fffdf9", accent: "#ff7a4d", accent2: "#ffd166", accent3: "#8e79d9" },
+  { id: "ocean", name: "Ocean", paper: "#eef6f8", ink: "#12272f", surface: "#12272f", card: "#ffffff", accent: "#42d6c3", accent2: "#6ea8fe", accent3: "#a78bfa" },
+  { id: "berry", name: "Berry", paper: "#faf0f6", ink: "#2c1726", surface: "#2c1726", card: "#fffafd", accent: "#ff5c9a", accent2: "#b58cff", accent3: "#ffb45c" },
+  { id: "ice", name: "Ice", paper: "#f2f7ff", ink: "#10233d", surface: "#10233d", card: "#ffffff", accent: "#79d6ff", accent2: "#7c8cff", accent3: "#b7f171" },
+  { id: "sand", name: "Sand", paper: "#f8f1e3", ink: "#292318", surface: "#292318", card: "#fffdf7", accent: "#e7a94b", accent2: "#7fb7a5", accent3: "#d27b78" },
 ];
 
 const defaultRates: CurrencyRates = { RUB: 1, USD: 0, EUR: 0 };
@@ -543,6 +544,9 @@ export default function Home() {
   const themeStyle = {
     "--paper": palette.paper,
     "--ink": palette.ink,
+    "--surface": palette.surface ?? palettes.find((item) => item.id === palette.id)?.surface ?? "#151713",
+    "--muted": `color-mix(in srgb, ${palette.ink} 58%, ${palette.paper})`,
+    "--line": `color-mix(in srgb, ${palette.ink} 16%, ${palette.paper})`,
     "--card": palette.card,
     "--lime": palette.accent,
     "--accent-2": palette.accent2,
@@ -1123,8 +1127,8 @@ function CollectionModal({ products, onClose, onCreate }: { products: Product[];
 
 function ThemeModal({ palette, onApply, onClose }: { palette: Palette; onApply: (palette: Palette) => void; onClose: () => void }) {
   const [selected, setSelected] = useState<Palette>(palette);
-  const previewStyle = { "--preview-paper": selected.paper, "--preview-ink": selected.ink, "--preview-card": selected.card, "--preview-accent": selected.accent, "--preview-accent-2": selected.accent2, "--preview-accent-3": selected.accent3 } as CSSProperties;
-  const updateCustom = (key: keyof Pick<Palette, "paper" | "ink" | "card" | "accent" | "accent2" | "accent3">, value: string) => setSelected((current) => ({ ...current, id: "custom", name: "Моя палитра", [key]: value }));
+  const previewStyle = { "--preview-paper": selected.paper, "--preview-ink": selected.ink, "--preview-surface": selected.surface ?? palettes.find((item) => item.id === selected.id)?.surface ?? "#151713", "--preview-card": selected.card, "--preview-accent": selected.accent, "--preview-accent-2": selected.accent2, "--preview-accent-3": selected.accent3 } as CSSProperties;
+  const updateCustom = (key: keyof Pick<Palette, "paper" | "ink" | "card" | "accent" | "accent2" | "accent3">, value: string) => setSelected((current) => ({ ...current, surface: current.surface ?? palettes.find((item) => item.id === current.id)?.surface ?? "#151713", id: "custom", name: "Моя палитра", [key]: value }));
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="modal theme-modal" role="dialog" aria-modal="true" aria-labelledby="theme-title">

@@ -39,11 +39,12 @@ test("server-renders the PricePulse product", async () => {
 });
 
 test("removes the temporary starter preview", async () => {
-  const [css, page, aiViews, discoverRoute, layout, packageJson] = await Promise.all([
+  const [css, page, aiViews, discoverRoute, cs2InvestmentsRoute, layout, packageJson] = await Promise.all([
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/ai-views.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/discover/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/cs2-investments/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
@@ -56,8 +57,9 @@ test("removes the temporary starter preview", async () => {
   assert.match(aiViews, /Разрешить и продолжить/);
   assert.match(aiViews, /pricepulse-external-search-consent/);
   assert.match(aiViews, /AI-КОНСУЛЬТАНТ ПО ПОКУПКЕ/);
-  assert.match(aiViews, /РЫНОЧНЫЙ РАДАР/);
-  assert.match(aiViews, /offline-fallback/);
+  assert.match(aiViews, /CS2 ИНВЕСТ-РАДАР/);
+  assert.match(aiViews, /offline-cs2-watchlist/);
+  assert.match(aiViews, /\\/api\\/cs2-investments/);
   assert.match(page, /InvestmentsView/);
   assert.match(page, /x-telegram-init-data/);
   assert.match(page, /TELEGRAM ACCOUNT/);

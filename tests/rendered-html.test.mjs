@@ -66,6 +66,8 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /pricepulse-currency/);
   assert.match(page, /\/api\/rates/);
   assert.match(page, /Обновить все цены/);
+  assert.match(page, /проверяются по содержимому страницы/);
+  assert.match(page, /resolveStoreProduct/);
   assert.match(page, /OpenRouter-ready/);
   assert.match(css, /profile-sync-badge/);
   assert.match(css, /\.primary-button[^}]*display:\s*inline-flex/s);

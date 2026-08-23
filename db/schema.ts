@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { index, integer, real, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const telegramUsers = sqliteTable("telegram_users", {
   id: text("id").primaryKey(),
@@ -24,3 +24,19 @@ export const profileStates = sqliteTable("profile_states", {
   revision: integer("revision").notNull().default(1),
   updatedAt: text("updated_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
+
+
+export const cs2MarketSnapshots = sqliteTable("cs2_market_snapshots", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  itemKey: text("item_key").notNull(),
+  name: text("name").notNull(),
+  itemType: text("item_type").notNull(),
+  priceUsd: real("price_usd").notNull(),
+  lisOffers: integer("lis_offers").notNull().default(0),
+  sourceUrl: text("source_url").notNull(),
+  bucket: integer("bucket").notNull(),
+  capturedAt: text("captured_at").notNull().default(sql`CURRENT_TIMESTAMP`),
+}, (table) => [
+  uniqueIndex("idx_cs2_snapshots_item_bucket").on(table.itemKey, table.bucket),
+  index("idx_cs2_snapshots_item_captured").on(table.itemKey, table.capturedAt),
+]);

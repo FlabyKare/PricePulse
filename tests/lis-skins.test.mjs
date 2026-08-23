@@ -66,3 +66,52 @@ test("rejects unrelated store URLs before fetching the LIS-SKINS catalogue", asy
     globalThis.fetch = originalFetch;
   }
 });
+
+
+test("resolves an Ozon product from page metadata even when URL has only an id", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url === "https://www.ozon.ru/product/1883746/") {
+      return new Response(
+        '<html><head><meta property="og:title" content="Наушники Sony WH-1000XM5 — Ozon"></head><body><h1>Наушники Sony WH-1000XM5</h1><span>29 990 ₽</span></body></html>',
+        { headers: { "content-type": "text/html; charset=utf-8" } },
+      );
+    }
+    throw new Error(`Unexpected outbound request: ${url}`);
+  };
+  try {
+    const worker = await loadWorker();
+    const response = await worker.fetch(new Request("http://localhost/api/products/resolve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: "https://www.ozon.ru/product/1883746/" }),
+    }), workerEnv, workerContext);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.source, "OZON");
+    assert.equal(body.name, "Наушники Sony WH-1000XM5");
+    assert.equal(body.priceRub, 29990);
+    assert.equal(body.needsManualPrice, false);
+    assert.equal(body.resolvedBy, "page-content");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("keeps a user-provided name when a supported store blocks page parsing", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response("Forbidden", { status: 403 });
+  try {
+    const worker = await loadWorker();
+    const response = await worker.fetch(new Request("http://localhost/api/products/resolve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: "https://www.ozon.ru/product/1883746/", name: "Sony WH-1000XM5" }),
+    }), workerEnv, workerContext);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.name, "Sony WH-1000XM5");
+    assert.equal(body.priceRub, null);
+    assert.equal(body.needsManualPrice, true);
+    assert.equal(body.resolvedBy, "safe-fallback");
+  } finally { globalThis.fetch = originalFetch; }
+});

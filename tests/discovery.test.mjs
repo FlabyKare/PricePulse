@@ -62,6 +62,7 @@ test("builds product cards with reviews prices and multiple sources", async () =
     assert.match(body.products[0].ratingLabel, /4\.8/);
     assert.match(body.products[0].priceLabel, /29 990/);
     assert.ok(body.products[0].sources.length >= 4);
+    assert.ok(body.products[0].sources.some((source) => source.title === "Поиск по сайтам магазинов" && decodeURIComponent(source.url).includes("site:ozon.ru/product")));
     assert.match(JSON.stringify(body.products), /Наушники sony wh-1000xm5/);
   } finally { globalThis.fetch = originalFetch; }
 });

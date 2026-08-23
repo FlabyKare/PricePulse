@@ -607,3 +607,79 @@ select, .standalone-input { width: 100%; height: 50px; padding: 0 13px; border: 
   .market-sources { padding: 20px; }
   .market-sources > div:last-child { grid-template-columns: 1fr; }
 }
+
+
+/* CS2 item investment radar */
+.cs2-investments-hero {
+  background:
+    radial-gradient(circle at 82% 14%, color-mix(in srgb, var(--lime) 26%, transparent), transparent 28%),
+    radial-gradient(circle at 12% 96%, color-mix(in srgb, #6f52ff 20%, transparent), transparent 30%),
+    linear-gradient(135deg, #111711, #1c2823 72%, #253831);
+}
+.cs2-investment-filters {
+  display: flex;
+  gap: 7px;
+  overflow-x: auto;
+  margin: 0 0 15px;
+  padding-bottom: 3px;
+  scrollbar-width: none;
+}
+.cs2-investment-filters::-webkit-scrollbar { display: none; }
+.cs2-investment-filters button {
+  flex: 0 0 auto;
+  min-height: 34px;
+  padding: 0 13px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted);
+  font: inherit;
+  font-size: 8px;
+  font-weight: 850;
+  cursor: pointer;
+}
+.cs2-investment-filters button.active {
+  border-color: var(--ink);
+  background: var(--ink);
+  color: var(--lime);
+}
+.cs2-investment-card { display: flex; min-height: 0; flex-direction: column; }
+.risk-high { background: #ffebe7; color: #ac4f41; }
+.risk-very-high { background: #2c2020; color: #ffb7aa; }
+.cs2-market-stats {
+  display: grid;
+  grid-template-columns: 1.2fr .85fr 1fr;
+  gap: 1px;
+  overflow: hidden;
+  margin-top: 15px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--line);
+}
+.cs2-market-stats > div { min-width: 0; padding: 10px; background: var(--card); }
+.cs2-market-stats small { display: block; margin-bottom: 5px; color: var(--muted); font-size: 7px; }
+.cs2-market-stats b { display: block; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.cs2-market-stats b.positive { color: #27845c; }
+.cs2-market-stats b.negative { color: #b94c3f; }
+.cs2-score { margin-top: 15px; padding: 12px; border-radius: 13px; background: color-mix(in srgb, var(--accent-3) 9%, var(--card)); }
+.cs2-score > div:first-child { display: flex; align-items: center; justify-content: space-between; font-size: 9px; }
+.cs2-score > div:first-child b { font-size: 12px; }
+.cs2-score-track { height: 6px; overflow: hidden; margin: 8px 0; border-radius: 99px; background: color-mix(in srgb, var(--ink) 10%, transparent); }
+.cs2-score-track span { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent-2), var(--lime)); }
+.cs2-score p { margin: 0; color: var(--muted); font-size: 7px; }
+.cs2-reasons { margin-top: 15px; }
+.cs2-reasons > b, .cs2-catalysts > b { display: block; color: var(--ink); font-size: 8px; }
+.cs2-reasons ul { margin-top: 5px; }
+.cs2-catalysts { margin-top: 14px; }
+.cs2-catalysts > div { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+.cs2-catalysts span { padding: 6px 8px; border-radius: 999px; background: color-mix(in srgb, var(--lime) 22%, white); color: #526016; font-size: 7px; font-weight: 750; }
+.cs2-investment-card .investment-card-links { margin-top: auto; padding-top: 15px; }
+.cs2-methodology { margin-top: 26px; padding: 24px 27px; border: 1px solid var(--line); border-radius: 20px; background: var(--card); }
+.cs2-methodology h2 { margin: 7px 0 8px; font-size: 23px; letter-spacing: -.8px; }
+.cs2-methodology > p:last-child { max-width: 830px; margin: 0; color: var(--muted); font-size: 9px; line-height: 1.6; }
+
+@media (max-width: 560px) {
+  .cs2-market-stats { grid-template-columns: 1fr 1fr; }
+  .cs2-market-stats > div:first-child { grid-column: 1 / -1; }
+  .cs2-methodology { padding: 20px; }
+}

@@ -57,6 +57,7 @@ test("removes the temporary starter preview", async () => {
   assert.match(aiViews, /pricepulse-external-search-consent/);
   assert.match(aiViews, /AI-КОНСУЛЬТАНТ ПО ПОКУПКЕ/);
   assert.match(aiViews, /РЫНОЧНЫЙ РАДАР/);
+  assert.match(aiViews, /offline-fallback/);
   assert.match(page, /InvestmentsView/);
   assert.match(page, /x-telegram-init-data/);
   assert.match(page, /TELEGRAM ACCOUNT/);
@@ -73,6 +74,8 @@ test("removes the temporary starter preview", async () => {
   assert.match(discoverRoute, /csfloat\.com\/search/);
   assert.match(discoverRoute, /market\.csgo\.com\/en/);
   assert.match(layout, /title: "PricePulse/);
+  assert.match(layout, /telegram-web-app\.js/);
+  assert.match(page, /body\.profile!\.username \?\? current\?\.username/);
   assert.match(css, /prefers-reduced-motion/);
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
   await assert.rejects(access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)));

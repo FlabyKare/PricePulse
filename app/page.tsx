@@ -204,6 +204,7 @@ const palettes: Palette[] = [
   { id: "berry", name: "Berry", paper: "#faf0f6", ink: "#2c1726", surface: "#2c1726", card: "#fffafd", accent: "#ff5c9a", accent2: "#b58cff", accent3: "#ffb45c" },
   { id: "ice", name: "Ice", paper: "#f2f7ff", ink: "#10233d", surface: "#10233d", card: "#ffffff", accent: "#79d6ff", accent2: "#7c8cff", accent3: "#b7f171" },
   { id: "sand", name: "Sand", paper: "#f8f1e3", ink: "#292318", surface: "#292318", card: "#fffdf7", accent: "#e7a94b", accent2: "#7fb7a5", accent3: "#d27b78" },
+  { id: "forest", name: "Forest", paper: "#07140e", ink: "#e7f5ea", surface: "#10271b", card: "#0c1f16", accent: "#9be564", accent2: "#37b982", accent3: "#d2ad67" },
 ];
 
 const defaultRates: CurrencyRates = { RUB: 1, USD: 0, EUR: 0 };

@@ -59,7 +59,7 @@ test("removes the temporary starter preview", async () => {
   assert.match(aiViews, /AI-КОНСУЛЬТАНТ ПО ПОКУПКЕ/);
   assert.match(aiViews, /CS2 ИНВЕСТ-РАДАР/);
   assert.match(aiViews, /offline-cs2-watchlist/);
-  assert.match(aiViews, /\\/api\\/cs2-investments/);
+  assert.ok(aiViews.includes("/api/cs2-investments"));
   assert.match(page, /InvestmentsView/);
   assert.match(page, /x-telegram-init-data/);
   assert.match(page, /TELEGRAM ACCOUNT/);

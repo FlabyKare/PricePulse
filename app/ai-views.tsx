@@ -53,6 +53,28 @@ type InvestmentsResponse = {
 
 const consentStorageKey = "pricepulse-external-search-consent";
 
+
+function fallbackInvestments(): InvestmentsResponse {
+  const sources: InvestmentSource[] = [
+    { title: "Финансовые рынки", url: "https://www.cbr.ru/financial_markets/", description: "Официальные данные Банка России.", publisher: "Банк России" },
+    { title: "Новости Московской биржи", url: "https://www.moex.com/ru/news/", description: "Новости торгов и инструментов.", publisher: "Московская биржа" },
+    { title: "РБК Инвестиции", url: "https://www.rbc.ru/quote/", description: "Публичные новости рынков и компаний.", publisher: "РБК" },
+    { title: "БКС Экспресс", url: "https://t.me/bcs_express", description: "Публичный аналитический канал.", publisher: "БКС Экспресс" },
+  ];
+  return {
+    updatedAt: new Date().toISOString(),
+    mode: "offline-fallback",
+    disclaimer: "Это базовый список тем из публичных источников, а не индивидуальная инвестиционная рекомендация. Обновите обзор при восстановлении сети и проверяйте первоисточники.",
+    sources,
+    ideas: [
+      { id: "fallback-rates", title: "Ставка и облигации", assetClass: "Облигации", thesis: "Следить за решениями Банка России и изменением доходностей. Сравнивать срок, кредитный риск и ликвидность.", horizon: "3–18 месяцев", risk: "средний", confidence: "наблюдать", signals: ["Решения по ключевой ставке", "Доходности и сроки погашения"], sourceUrls: [sources[0].url, sources[1].url] },
+      { id: "fallback-equities", title: "Компании с понятным денежным потоком", assetClass: "Акции", thesis: "Проверять долговую нагрузку, прибыль и дивидендную политику. Новостной импульс сам по себе недостаточен.", horizon: "12+ месяцев", risk: "высокий", confidence: "наблюдать", signals: ["Отчётность компаний", "Долг и свободный денежный поток"], sourceUrls: [sources[1].url, sources[2].url] },
+      { id: "fallback-defensive", title: "Защитные активы и сырьё", assetClass: "Золото / сырьё", thesis: "Оценивать реакцию защитных активов на валюту, ставки и новости только как часть диверсифицированного портфеля.", horizon: "6–24 месяца", risk: "высокий", confidence: "наблюдать", signals: ["Курс рубля", "Ставки и инфляционные ожидания"], sourceUrls: [sources[0].url, sources[2].url] },
+      { id: "fallback-digital", title: "Цифровые активы — только малой долей", assetClass: "Крипто / цифровые предметы", thesis: "Заранее определить допустимый убыток, проверить ликвидность площадки и не использовать заёмные средства.", horizon: "Спекулятивный", risk: "высокий", confidence: "наблюдать", signals: ["Ликвидность", "Регуляторные и платформенные риски"], sourceUrls: [sources[0].url, sources[3].url] },
+    ],
+  };
+}
+
 export function SmartDiscoveryView({ products }: { products: ProductContext[] }) {
   const [mode, setMode] = useState<"search" | "assistant">("search");
   const [query, setQuery] = useState("");
@@ -268,9 +290,10 @@ export function InvestmentsView() {
       const response = await fetch("/api/investments", { cache: "no-store" });
       const body = await response.json() as InvestmentsResponse;
       if (!response.ok) throw new Error(body.error || "Не удалось обновить рыночный обзор");
-      setData(body);
-    } catch (refreshError) {
-      setError(refreshError instanceof Error ? refreshError.message : "Не удалось обновить рыночный обзор");
+      setData(body.ideas?.length ? body : fallbackInvestments());
+    } catch {
+      setData(fallbackInvestments());
+      setError("Внешние источники сейчас недоступны — показаны базовые темы. Нажмите «Обновить обзор» позже.");
     } finally { setLoading(false); }
   }
 

@@ -31,22 +31,31 @@ type AssistantMessage = { id: string; role: "user" | "assistant"; content: strin
 type AssistantResponse = { answer?: string; mode?: string; sources?: AssistantSource[]; followUps?: string[]; error?: string };
 
 type InvestmentSource = { title: string; url: string; description: string; publisher: string };
-type InvestmentIdea = {
+type Cs2InvestmentIdea = {
   id: string;
-  title: string;
-  assetClass: string;
-  thesis: string;
+  name: string;
+  itemType: "Скин" | "Наклейка" | "Кейс / капсула";
+  priceUsd: number;
+  priceLabel: string;
+  lisOffers: number;
+  momentum30d: number | null;
+  historyPoints: number;
+  potentialScore: number;
+  scoreLabel: string;
   horizon: string;
-  risk: "низкий" | "средний" | "высокий";
-  confidence: "наблюдать" | "умеренная" | "повышенная";
-  signals: string[];
+  confidence: string;
+  risk: "высокий" | "очень высокий";
+  reasons: string[];
+  catalysts: string[];
   sourceUrls: string[];
+  itemUrl: string;
 };
 type InvestmentsResponse = {
   updatedAt: string;
   mode: string;
+  methodology: string;
   disclaimer: string;
-  ideas: InvestmentIdea[];
+  ideas: Cs2InvestmentIdea[];
   sources: InvestmentSource[];
   error?: string;
 };
@@ -56,22 +65,68 @@ const consentStorageKey = "pricepulse-external-search-consent";
 
 function fallbackInvestments(): InvestmentsResponse {
   const sources: InvestmentSource[] = [
-    { title: "Финансовые рынки", url: "https://www.cbr.ru/financial_markets/", description: "Официальные данные Банка России.", publisher: "Банк России" },
-    { title: "Новости Московской биржи", url: "https://www.moex.com/ru/news/", description: "Новости торгов и инструментов.", publisher: "Московская биржа" },
-    { title: "РБК Инвестиции", url: "https://www.rbc.ru/quote/", description: "Публичные новости рынков и компаний.", publisher: "РБК" },
-    { title: "БКС Экспресс", url: "https://t.me/bcs_express", description: "Публичный аналитический канал.", publisher: "БКС Экспресс" },
+    { title: "Новости Counter-Strike", url: "https://www.counter-strike.net/news", description: "Официальные обновления игры и турниров.", publisher: "Counter-Strike" },
+    { title: "Торговая площадка Steam", url: "https://steamcommunity.com/market/search?appid=730", description: "Проверка спроса, предложений и истории цен.", publisher: "Steam Market" },
+    { title: "Каталог CS2", url: "https://lis-skins.com/market/csgo/", description: "Текущие цены и предложения предметов.", publisher: "LIS-SKINS" },
+  ];
+  const steam = (name: string) => `https://steamcommunity.com/market/listings/730/${encodeURIComponent(name)}`;
+  const candidates: Array<Pick<Cs2InvestmentIdea, "name" | "itemType" | "potentialScore" | "scoreLabel" | "horizon" | "reasons" | "catalysts">> = [
+    {
+      name: "Sticker | Natus Vincere (Holo) | Stockholm 2021",
+      itemType: "Наклейка",
+      potentialScore: 68,
+      scoreLabel: "Кандидат в наблюдение",
+      horizon: "6–18 месяцев",
+      reasons: ["Турнирная наклейка с ограниченным выпуском", "Популярная команда и Holo-эффект"],
+      catalysts: ["Рост интереса к старым турнирным коллекциям", "Сокращение доступного предложения"],
+    },
+    {
+      name: "Stockholm 2021 Legends Sticker Capsule",
+      itemType: "Кейс / капсула",
+      potentialScore: 65,
+      scoreLabel: "Следить за предложением",
+      horizon: "12+ месяцев",
+      reasons: ["Закрытая турнирная капсула", "Спрос связан с наклейками команд внутри"],
+      catalysts: ["Уменьшение запаса капсул", "Рост цен на редкие вложения"],
+    },
+    {
+      name: "AK-47 | Redline (Field-Tested)",
+      itemType: "Скин",
+      potentialScore: 61,
+      scoreLabel: "Ликвидный ориентир",
+      horizon: "3–12 месяцев",
+      reasons: ["Узнаваемый скин на популярное оружие", "Обычно проще перепродать, чем нишевые предметы"],
+      catalysts: ["Рост рынка CS2", "Спрос на крафты с наклейками"],
+    },
+    {
+      name: "Recoil Case",
+      itemType: "Кейс / капсула",
+      potentialScore: 58,
+      scoreLabel: "Спекулятивное наблюдение",
+      horizon: "12+ месяцев",
+      reasons: ["Дешёвый вход и понятный рыночный объём", "Потенциал зависит от изменения дропа"],
+      catalysts: ["Переход в редкий пул", "Спрос на открытие кейсов"],
+    },
   ];
   return {
     updatedAt: new Date().toISOString(),
-    mode: "offline-fallback",
-    disclaimer: "Это базовый список тем из публичных источников, а не индивидуальная инвестиционная рекомендация. Обновите обзор при восстановлении сети и проверяйте первоисточники.",
+    mode: "offline-cs2-watchlist",
+    methodology: "Офлайн-список не содержит выдуманных цен. После восстановления соединения PricePulse подставит текущие цены LIS-SKINS, число предложений и собственную историю.",
+    disclaimer: "Предметы CS2 волатильны, ликвидность и комиссии меняются. Оценка не гарантирует рост и не является командой к покупке.",
     sources,
-    ideas: [
-      { id: "fallback-rates", title: "Ставка и облигации", assetClass: "Облигации", thesis: "Следить за решениями Банка России и изменением доходностей. Сравнивать срок, кредитный риск и ликвидность.", horizon: "3–18 месяцев", risk: "средний", confidence: "наблюдать", signals: ["Решения по ключевой ставке", "Доходности и сроки погашения"], sourceUrls: [sources[0].url, sources[1].url] },
-      { id: "fallback-equities", title: "Компании с понятным денежным потоком", assetClass: "Акции", thesis: "Проверять долговую нагрузку, прибыль и дивидендную политику. Новостной импульс сам по себе недостаточен.", horizon: "12+ месяцев", risk: "высокий", confidence: "наблюдать", signals: ["Отчётность компаний", "Долг и свободный денежный поток"], sourceUrls: [sources[1].url, sources[2].url] },
-      { id: "fallback-defensive", title: "Защитные активы и сырьё", assetClass: "Золото / сырьё", thesis: "Оценивать реакцию защитных активов на валюту, ставки и новости только как часть диверсифицированного портфеля.", horizon: "6–24 месяца", risk: "высокий", confidence: "наблюдать", signals: ["Курс рубля", "Ставки и инфляционные ожидания"], sourceUrls: [sources[0].url, sources[2].url] },
-      { id: "fallback-digital", title: "Цифровые активы — только малой долей", assetClass: "Крипто / цифровые предметы", thesis: "Заранее определить допустимый убыток, проверить ликвидность площадки и не использовать заёмные средства.", horizon: "Спекулятивный", risk: "высокий", confidence: "наблюдать", signals: ["Ликвидность", "Регуляторные и платформенные риски"], sourceUrls: [sources[0].url, sources[3].url] },
-    ],
+    ideas: candidates.map((candidate, index) => ({
+      id: `fallback-cs2-${index}`,
+      ...candidate,
+      priceUsd: 0,
+      priceLabel: "Проверить цену",
+      lisOffers: 0,
+      momentum30d: null,
+      historyPoints: 0,
+      confidence: "нужна онлайн-проверка",
+      risk: "очень высокий",
+      sourceUrls: [steam(candidate.name), sources[2].url, sources[0].url],
+      itemUrl: steam(candidate.name),
+    })),
   };
 }
 
@@ -283,42 +338,83 @@ export function InvestmentsView() {
   const [data, setData] = useState<InvestmentsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [filter, setFilter] = useState<"Все" | "Скины" | "Наклейки" | "Кейсы и капсулы">("Все");
 
   async function refresh() {
     setLoading(true); setError("");
     try {
-      const response = await fetch("/api/investments", { cache: "no-store" });
+      const response = await fetch("/api/cs2-investments", { cache: "no-store" });
       const body = await response.json() as InvestmentsResponse;
-      if (!response.ok) throw new Error(body.error || "Не удалось обновить рыночный обзор");
+      if (!response.ok) throw new Error(body.error || "Не удалось обновить CS2-радар");
       setData(body.ideas?.length ? body : fallbackInvestments());
     } catch {
       setData(fallbackInvestments());
-      setError("Внешние источники сейчас недоступны — показаны базовые темы. Нажмите «Обновить обзор» позже.");
+      setError("Рынок сейчас не ответил — показываем офлайн-лист без выдуманных цен. Попробуйте обновить позже.");
     } finally { setLoading(false); }
   }
 
   useEffect(() => { void refresh(); }, []);
 
+  const visibleIdeas = useMemo(() => {
+    const ideas = data?.ideas ?? [];
+    if (filter === "Скины") return ideas.filter((idea) => idea.itemType === "Скин");
+    if (filter === "Наклейки") return ideas.filter((idea) => idea.itemType === "Наклейка");
+    if (filter === "Кейсы и капсулы") return ideas.filter((idea) => idea.itemType === "Кейс / капсула");
+    return ideas;
+  }, [data, filter]);
+
+  function sourceLabel(url: string) {
+    if (url.includes("lis-skins")) return "LIS-SKINS";
+    if (url.includes("steamcommunity")) return "Steam Market";
+    if (url.includes("counter-strike")) return "Новости CS2";
+    return data?.sources.find((source) => source.url === url)?.publisher || "Источник";
+  }
+
   return (
     <section className="investments-view">
-      <div className="investments-hero">
-        <div><p className="eyebrow">РЫНОЧНЫЙ РАДАР</p><h1>Идеи из открытых источников. Без «тайных сигналов».</h1><p>PricePulse сопоставляет новости, публичную аналитику и официальные данные, показывает тезис, риск и ссылки для самостоятельной проверки.</p></div>
-        <button onClick={() => void refresh()} disabled={loading}>{loading ? "Обновляем…" : "Обновить обзор"} <span>↻</span></button>
+      <div className="investments-hero cs2-investments-hero">
+        <div>
+          <p className="eyebrow">CS2 ИНВЕСТ-РАДАР</p>
+          <h1>Конкретные предметы с потенциалом — и причины, почему.</h1>
+          <p>PricePulse проверяет живые цены LIS-SKINS, доступное предложение и собственную историю. В списке — скины, наклейки и кейсы, а не абстрактные «рыночные темы».</p>
+        </div>
+        <button onClick={() => void refresh()} disabled={loading}>{loading ? "Считаем…" : "Обновить радар"} <span>↻</span></button>
       </div>
-      <div className="investment-warning"><span>!</span><p><b>Не индивидуальная рекомендация.</b> Ни одна карточка не является командой купить или продать. Не используйте заёмные средства и учитывайте риск полной потери капитала.</p></div>
+      <div className="investment-warning"><span>!</span><p><b>Это оценка потенциала, не обещание роста.</b> Рынок предметов CS2 волатилен. Учитывайте комиссии, ликвидность, блокировку обмена и риск полной потери вложений.</p></div>
       {error && <p className="investment-error" role="alert">{error}</p>}
-      {loading && !data ? <div className="investment-loading"><span>↗</span><p>Читаем публичные источники и группируем рыночные темы…</p></div> : (
+      {loading && !data ? <div className="investment-loading"><span>⌁</span><p>Сверяем каталог CS2, цены и накопленную историю…</p></div> : (
         <>
-          <div className="investment-head"><div><h2>Темы для наблюдения</h2><p>{data?.updatedAt ? `Обновлено ${new Date(data.updatedAt).toLocaleString("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}` : ""}</p></div><span>{data?.ideas.length ?? 0} идей</span></div>
-          <div className="investment-grid">{data?.ideas.map((idea, index) => (
-            <article className="investment-card" key={idea.id}>
-              <div className="investment-card-top"><span className={`risk risk-${idea.risk}`}>риск: {idea.risk}</span><i>{String(index + 1).padStart(2, "0")}</i></div>
-              <small>{idea.assetClass} · {idea.horizon}</small><h3>{idea.title}</h3><p>{idea.thesis}</p>
-              {!!idea.signals.length && <ul>{idea.signals.map((signal) => <li key={signal}>{signal}</li>)}</ul>}
-              <div className="investment-card-links">{idea.sourceUrls.slice(0, 3).map((url) => { const source = data.sources.find((item) => item.url === url); return <a key={url} href={url} target="_blank" rel="noopener noreferrer">{source?.publisher || "Источник"} ↗</a>; })}</div>
-            </article>
-          ))}</div>
-          <section className="market-sources"><div><p className="eyebrow">ПУБЛИЧНЫЕ ИСТОЧНИКИ</p><h2>Откуда взяты сигналы</h2></div><div>{data?.sources.slice(0, 8).map((source) => <a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer"><small>{source.publisher}</small><b>{source.title}</b><span>↗</span></a>)}</div></section>
+          <div className="investment-head">
+            <div><h2>Кандидаты для наблюдения</h2><p>{data?.updatedAt ? `Обновлено ${new Date(data.updatedAt).toLocaleString("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}` : ""}</p></div>
+            <span>{visibleIdeas.length} предметов</span>
+          </div>
+          <div className="cs2-investment-filters" role="group" aria-label="Тип предмета">
+            {(["Все", "Скины", "Наклейки", "Кейсы и капсулы"] as const).map((item) => <button key={item} type="button" className={filter === item ? "active" : ""} onClick={() => setFilter(item)}>{item}</button>)}
+          </div>
+          <div className="investment-grid cs2-investment-grid">
+            {visibleIdeas.map((idea, index) => (
+              <article className="investment-card cs2-investment-card" key={idea.id}>
+                <div className="investment-card-top"><span className={idea.risk === "очень высокий" ? "risk risk-very-high" : "risk risk-high"}>риск: {idea.risk}</span><i>{String(index + 1).padStart(2, "0")}</i></div>
+                <small>{idea.itemType} · {idea.horizon}</small><h3>{idea.name}</h3>
+                <div className="cs2-market-stats">
+                  <div><small>Цена сейчас</small><b>{idea.priceLabel}</b></div>
+                  <div><small>Предложений LIS</small><b>{idea.lisOffers || "—"}</b></div>
+                  <div><small>Динамика 30 дней</small><b className={idea.momentum30d === null ? "" : idea.momentum30d >= 0 ? "positive" : "negative"}>{idea.momentum30d === null ? "копим историю" : `${idea.momentum30d > 0 ? "+" : ""}${idea.momentum30d}%`}</b></div>
+                </div>
+                <div className="cs2-score">
+                  <div><span>Потенциал</span><b>{idea.potentialScore}/100</b></div>
+                  <div className="cs2-score-track" aria-label={`Оценка потенциала ${idea.potentialScore} из 100`}><span style={{ width: `${idea.potentialScore}%` }} /></div>
+                  <p>{idea.scoreLabel} · {idea.confidence}</p>
+                </div>
+                <div className="cs2-reasons"><b>Почему в списке</b><ul>{idea.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div>
+                {!!idea.catalysts.length && <div className="cs2-catalysts"><b>Что может подтолкнуть цену</b><div>{idea.catalysts.map((catalyst) => <span key={catalyst}>{catalyst}</span>)}</div></div>}
+                <div className="investment-card-links">{idea.sourceUrls.slice(0, 3).map((url) => <a key={url} href={url} target="_blank" rel="noopener noreferrer">{sourceLabel(url)} ↗</a>)}</div>
+              </article>
+            ))}
+          </div>
+          {!visibleIdeas.length && <div className="discovery-empty"><span>⌁</span><h3>Пока нет предметов этого типа</h3><p>Обновите радар — список зависит от текущего каталога и ликвидности.</p></div>}
+          <section className="cs2-methodology"><p className="eyebrow">КАК СЧИТАЕТСЯ ОЦЕНКА</p><h2>Баллы — это фильтр, а не вероятность роста.</h2><p>{data?.methodology}</p></section>
+          <section className="market-sources"><div><p className="eyebrow">ПУБЛИЧНЫЕ ИСТОЧНИКИ</p><h2>Где проверить каждый тезис</h2></div><div>{data?.sources.slice(0, 8).map((source) => <a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer"><small>{source.publisher}</small><b>{source.title}</b><span>↗</span></a>)}</div></section>
           {data?.disclaimer && <p className="investment-disclaimer">{data.disclaimer}</p>}
         </>
       )}

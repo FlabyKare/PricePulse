@@ -200,6 +200,15 @@ async function openRouterDrafts(query: string, suggestions: string[], results: W
   }
 }
 
+function marketplaceFallback(name: string, domains: string[]): Source {
+  const scopedQuery = `${domains.map((domain) => `site:${domain}`).join(" OR ")} ${name}`;
+  return {
+    title: "Поиск по сайтам магазинов",
+    url: `https://yandex.ru/search/?text=${encodeURIComponent(scopedQuery)}`,
+    kind: "поиск",
+  };
+}
+
 function directSources(name: string, intent: SearchIntent): Source[] {
   const encoded = encodeURIComponent(name);
   if (intent === "cs2") return [
@@ -214,27 +223,40 @@ function directSources(name: string, intent: SearchIntent): Source[] {
     { title: "Ozon", url: `https://www.ozon.ru/search/?text=${encoded}`, kind: "магазин" },
     { title: "DNS", url: `https://www.dns-shop.ru/search/?q=${encoded}`, kind: "магазин" },
     { title: "М.Видео", url: `https://www.mvideo.ru/product-list-page?q=${encoded}`, kind: "магазин" },
+    marketplaceFallback(name, ["ozon.ru/product", "market.yandex.ru/product", "dns-shop.ru/product", "mvideo.ru/products"]),
   ];
   if (intent === "beauty") return [
     { title: "Золотое Яблоко", url: `https://goldapple.ru/catalogsearch/result?q=${encoded}`, kind: "магазин" },
     { title: "Лэтуаль", url: `https://www.letu.ru/search?text=${encoded}`, kind: "магазин" },
     { title: "Ozon", url: `https://www.ozon.ru/search/?text=${encoded}`, kind: "магазин" },
+    marketplaceFallback(name, ["ozon.ru/product", "goldapple.ru", "letu.ru"]),
   ];
   if (intent === "fashion") return [
     { title: "Lamoda", url: `https://www.lamoda.ru/catalogsearch/result/?q=${encoded}`, kind: "магазин" },
     { title: "Wildberries", url: `https://www.wildberries.ru/catalog/0/search.aspx?search=${encoded}`, kind: "магазин" },
     { title: "Ozon", url: `https://www.ozon.ru/search/?text=${encoded}`, kind: "магазин" },
+    marketplaceFallback(name, ["ozon.ru/product", "wildberries.ru/catalog", "lamoda.ru"]),
+  ];
+  if (intent === "home") return [
+    { title: "Яндекс Маркет", url: `https://market.yandex.ru/search?text=${encoded}`, kind: "магазин" },
+    { title: "Ozon", url: `https://www.ozon.ru/search/?text=${encoded}`, kind: "магазин" },
+    { title: "Wildberries", url: `https://www.wildberries.ru/catalog/0/search.aspx?search=${encoded}`, kind: "магазин" },
+    { title: "Hoff", url: `https://hoff.ru/catalog/?search=${encoded}`, kind: "магазин" },
+    { title: "ВсеИнструменты", url: `https://www.vseinstrumenti.ru/search/?q=${encoded}`, kind: "магазин" },
+    marketplaceFallback(name, ["ozon.ru/product", "market.yandex.ru/product", "wildberries.ru/catalog", "hoff.ru"]),
   ];
   if (intent === "auto") return [
     { title: "Exist", url: `https://exist.ru/Price/?pcode=${encoded}`, kind: "магазин" },
     { title: "Emex", url: `https://emex.ru/f?detailNum=${encoded}`, kind: "магазин" },
     { title: "Avito", url: `https://www.avito.ru/rossiya?q=${encoded}`, kind: "магазин" },
+    marketplaceFallback(name, ["exist.ru", "emex.ru", "autodoc.ru", "avito.ru"]),
   ];
   return [
     { title: "Яндекс Маркет", url: `https://market.yandex.ru/search?text=${encoded}`, kind: "магазин" },
     { title: "Ozon", url: `https://www.ozon.ru/search/?text=${encoded}`, kind: "магазин" },
     { title: "Wildberries", url: `https://www.wildberries.ru/catalog/0/search.aspx?search=${encoded}`, kind: "магазин" },
     { title: "Avito", url: `https://www.avito.ru/rossiya?q=${encoded}`, kind: "магазин" },
+    marketplaceFallback(name, ["ozon.ru/product", "market.yandex.ru/product", "wildberries.ru/catalog", "avito.ru"]),
     { title: "Отзывы и обзоры", url: `https://www.google.com/search?q=${encodeURIComponent(name + " отзывы обзор")}`, kind: "обзор" },
   ];
 }

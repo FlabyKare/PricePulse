@@ -35,9 +35,9 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="ru">
+    <html lang="ru" suppressHydrationWarning>
       <head>
-        <script src="https://telegram.org/js/telegram-web-app.js?59" />
+        <script src="https://telegram.org/js/telegram-web-app.js?63" />
       </head>
       <body>{children}</body>
     </html>

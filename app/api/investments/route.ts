@@ -46,7 +46,7 @@ async function publicMarketSources(): Promise<MarketSource[]> {
   ];
   const results = await Promise.allSettled(queries.map(async (query) => {
     const response = await fetch(`https://s.jina.ai/${encodeURIComponent(query)}`, {
-      headers: { accept: "application/json", "x-retain-images": "none" }, cache: "no-store",
+      headers: { accept: "application/json", "x-retain-images": "none" }, cache: "no-store", signal: AbortSignal.timeout(6_500),
     });
     if (!response.ok) return [];
     const payload = await response.json() as { data?: unknown };

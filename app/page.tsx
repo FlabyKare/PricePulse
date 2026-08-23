@@ -42,6 +42,17 @@ type ResolvedLisProduct = {
   approximate: boolean;
 };
 
+type ResolvedStoreProduct = {
+  source: string;
+  name: string;
+  url: string;
+  priceRub: number | null;
+  count: number;
+  approximate: boolean;
+  needsManualPrice: boolean;
+  resolvedBy: "page-content" | "url-fallback" | "safe-fallback" | "official-catalogue";
+};
+
 type Collection = {
   id: string;
   name: string;
@@ -255,6 +266,17 @@ async function resolveLisProduct(url: string) {
   });
   const result = await response.json() as ResolvedLisProduct & { error?: string };
   if (!response.ok) throw new Error(result.error || "Не удалось получить цену LIS-SKINS");
+  return result;
+}
+
+async function resolveStoreProduct(url: string, name = "") {
+  const response = await fetch("/api/products/resolve", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ url, name }),
+  });
+  const result = await response.json() as ResolvedStoreProduct & { error?: string };
+  if (!response.ok) throw new Error(result.error || "Не удалось распознать страницу магазина");
   return result;
 }
 
@@ -876,6 +898,7 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
   const [customCategory, setCustomCategory] = useState("");
   const [target, setTarget] = useState("");
   const [manualPrice, setManualPrice] = useState("");
+  const [manualName, setManualName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const lisUrlEntered = isLisSkinsUrl(url);
@@ -897,24 +920,40 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
     }
     const isLis = isLisSkinsUrl(parsedUrl.href);
     const enteredPrice = Number(manualPrice.replace(/\s/g, "").replace(",", "."));
-    if (!isLis && (!Number.isFinite(enteredPrice) || enteredPrice <= 0)) {
-      setError("Для этого магазина укажите текущую цену вручную");
-      return;
-    }
 
     setLoading(true);
     setError("");
     try {
-      const resolved = isLis ? await resolveLisProduct(parsedUrl.href) : null;
-      const pathName = decodeURIComponent(parsedUrl.pathname).split("/").filter(Boolean).pop() ?? "Новый товар";
-      const inferredName = pathName.replace(/[-_]/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 60);
-      const currentPrice = resolved?.priceRub ?? enteredPrice;
-      const now = Date.now();
+      let resolved: ResolvedStoreProduct | ResolvedLisProduct | null = null;
+      try {
+        resolved = isLis ? await resolveLisProduct(parsedUrl.href) : await resolveStoreProduct(parsedUrl.href, manualName.trim());
+      } catch (resolveError) {
+        if (isLis) throw resolveError;
+      }
+
       const source = resolved?.source ?? parsedUrl.hostname.replace(/^www\./, "").toUpperCase();
+      const pathName = decodeURIComponent(parsedUrl.pathname).split("/").filter(Boolean).pop() ?? "";
+      const pathCandidate = pathName
+        .replace(/\.(?:html?|aspx?)$/i, "")
+        .replace(/[-_]?\d{5,}(?:[-_].*)?$/, "")
+        .replace(/[-_]+/g, " ")
+        .trim();
+      const inferredName = /[\p{L}]{3}/u.test(pathCandidate)
+        ? pathCandidate.replace(/\b\w/g, (letter) => letter.toUpperCase()).slice(0, 80)
+        : `Товар из ${source}`;
+      const productName = manualName.trim() || resolved?.name || inferredName;
+      const resolvedPrice = typeof resolved?.priceRub === "number" && resolved.priceRub > 0 ? resolved.priceRub : null;
+      const currentPrice = resolvedPrice ?? enteredPrice;
+      if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+        setError("Цена не определилась автоматически — укажите её вручную");
+        return;
+      }
+
+      const now = Date.now();
       const productUrl = resolved?.url ?? parsedUrl.href;
       onAdd({
         id: now,
-        name: resolved?.name ?? inferredName,
+        name: productName,
         source,
         url: productUrl,
         category: customCategory.trim() || category,
@@ -932,7 +971,13 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
           store: source,
           price: currentPrice,
           url: productUrl,
-          note: resolved ? `Официальный каталог · ${resolved.count} ${resolved.count === 1 ? "предложение" : "предложения"}` : "Цена указана вручную",
+          note: isLis && resolved
+            ? `Официальный каталог · ${resolved.count} ${resolved.count === 1 ? "предложение" : "предложения"}`
+            : resolvedPrice
+              ? "Название и цена распознаны со страницы магазина"
+              : resolved
+                ? "Название распознано · цена указана вручную"
+                : "Название и цена указаны вручную",
         }],
       });
     } catch (submitError) {
@@ -957,9 +1002,11 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
 
           {!lisUrlEntered && url && (
             <div className="manual-price-field">
-              <label className="field-label" htmlFor="manual-price">Текущая цена</label>
+              <label className="field-label" htmlFor="manual-name">Название товара <span className="optional-label">если не распознается</span></label>
+              <input id="manual-name" className="standalone-input product-name-fallback" value={manualName} onChange={(event) => setManualName(event.target.value)} placeholder="Например, Apple AirPods Pro 2" />
+              <label className="field-label manual-price-label" htmlFor="manual-price">Текущая цена <span className="optional-label">если не определится</span></label>
               <div className="price-input"><input id="manual-price" inputMode="decimal" value={manualPrice} onChange={(event) => setManualPrice(event.target.value.replace(/[^\d,.\s]/g, ""))} placeholder="Например, 4 500" /><span>₽</span></div>
-              <p className="field-hint">Для других магазинов цена пока указывается вручную</p>
+              <p className="field-hint">Ozon и другие поддерживаемые магазины проверяются по содержимому страницы, а не по названию в URL.</p>
             </div>
           )}
 
@@ -993,7 +1040,7 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
           </div>
           {error && <p className="form-error" role="alert">{error}</p>}
           <div className="smart-note"><span>✦</span><p><b>Умные уведомления</b><br />Сообщим в Telegram, когда цена достигнет цели или резко снизится.</p></div>
-          <button className="primary-button" type="submit" disabled={loading}>{loading ? "Получаем актуальную цену…" : "Начать мониторинг"} <span>→</span></button>
+          <button className="primary-button" type="submit" disabled={loading}>{loading ? "Распознаём товар…" : "Начать мониторинг"} <span>→</span></button>
         </form>
       </section>
     </div>

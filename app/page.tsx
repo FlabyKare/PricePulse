@@ -13,6 +13,11 @@ type Offer = {
   note: string;
 };
 
+type PricePoint = {
+  price: number;
+  capturedAt: string;
+};
+
 type Product = {
   id: number;
   name: string;
@@ -27,6 +32,8 @@ type Product = {
   art: string;
   artClass: string;
   favorite: boolean;
+  imageUrl?: string;
+  priceHistory?: PricePoint[];
   target?: number;
   offers?: Offer[];
 };
@@ -40,6 +47,7 @@ type ResolvedLisProduct = {
   exchangeRate: number;
   count: number;
   approximate: boolean;
+  imageUrl?: string | null;
 };
 
 type ResolvedStoreProduct = {
@@ -50,6 +58,7 @@ type ResolvedStoreProduct = {
   count: number;
   approximate: boolean;
   needsManualPrice: boolean;
+  imageUrl?: string | null;
   resolvedBy: "page-content" | "url-fallback" | "safe-fallback" | "official-catalogue";
 };
 
@@ -241,17 +250,103 @@ function usePriceFormatter() {
   return (value: number) => formatPriceValue(value, currency, rates);
 }
 
-const chartValues = [56, 48, 52, 37, 43, 29, 22, 30, 18, 12];
+const MIN_FORECAST_POINTS = 3;
+const MAX_HISTORY_POINTS = 60;
+
+function normalizePriceHistory(history: PricePoint[] | undefined) {
+  return (history ?? [])
+    .filter((point) => Number.isFinite(point.price) && point.price > 0 && Number.isFinite(Date.parse(point.capturedAt)))
+    .sort((a, b) => Date.parse(a.capturedAt) - Date.parse(b.capturedAt))
+    .slice(-MAX_HISTORY_POINTS);
+}
+
+function appendPriceObservation(history: PricePoint[] | undefined, price: number, capturedAt = new Date().toISOString()) {
+  const normalized = normalizePriceHistory(history);
+  if (!Number.isFinite(price) || price <= 0) return normalized;
+  const roundedPrice = Math.round(price * 100) / 100;
+  const last = normalized.at(-1);
+  const capturedTime = Date.parse(capturedAt);
+  if (last && last.price === roundedPrice && capturedTime - Date.parse(last.capturedAt) < 30 * 60 * 1000) return normalized;
+  return [...normalized, { price: roundedPrice, capturedAt }].slice(-MAX_HISTORY_POINTS);
+}
 
 function forecastFor(product: Product) {
-  if (product.change <= -4) return { label: "Можно покупать", text: "Цена заметно ниже средней за неделю", tone: "buy", confidence: 86 };
-  if (product.change > 1) return { label: "Лучше подождать", text: "Цена растёт — вероятна коррекция", tone: "wait", confidence: 74 };
-  return { label: "Наблюдать", text: "Цена рядом со средним значением", tone: "watch", confidence: 68 };
+  const history = normalizePriceHistory(product.priceHistory);
+  const values = history.length ? history.map((point) => point.price) : [product.price];
+  const minimum = Math.min(...values);
+  const maximum = Math.max(...values);
+  const spread = maximum - minimum;
+  const chart = values.slice(-14).map((value) => spread === 0 ? 46 : 18 + Math.round(((value - minimum) / spread) * 70));
+  const first = values[0];
+  const current = values.at(-1) ?? product.price;
+  const delta = current - first;
+
+  if (history.length < MIN_FORECAST_POINTS) {
+    return {
+      label: "Копим данные",
+      text: `Нужно минимум ${MIN_FORECAST_POINTS} реальных замера цены`,
+      tone: "collect",
+      confidence: null,
+      observedCount: history.length,
+      trendPercent: 0,
+      volatilityPercent: 0,
+      deviationPercent: 0,
+      chart,
+      delta,
+    };
+  }
+
+  const mean = values.reduce((sum, value) => sum + value, 0) / values.length;
+  const variance = values.reduce((sum, value) => sum + (value - mean) ** 2, 0) / values.length;
+  const volatilityPercent = mean > 0 ? (Math.sqrt(variance) / mean) * 100 : 0;
+  const deviationPercent = mean > 0 ? ((current - mean) / mean) * 100 : 0;
+  const xMean = (values.length - 1) / 2;
+  const slopeNumerator = values.reduce((sum, value, index) => sum + (index - xMean) * (value - mean), 0);
+  const slopeDenominator = values.reduce((sum, _value, index) => sum + (index - xMean) ** 2, 0) || 1;
+  const slope = slopeNumerator / slopeDenominator;
+  const trendPercent = mean > 0 ? (slope * (values.length - 1) / mean) * 100 : 0;
+
+  let label = "Наблюдать";
+  let text = "Отклонение от средней пока недостаточно для действия";
+  let tone = "watch";
+  if (deviationPercent <= -3 && trendPercent <= 1) {
+    label = "Цена привлекательна";
+    text = "Цена ниже средней, а ускорение роста не подтверждено";
+    tone = "buy";
+  } else if (deviationPercent >= 3 && trendPercent > 0.5) {
+    label = "Лучше подождать";
+    text = "Цена выше средней и растёт — дождитесь стабилизации";
+    tone = "wait";
+  }
+
+  const coverage = Math.min(1, history.length / 12);
+  const signalStrength = Math.min(1, (Math.abs(deviationPercent) + Math.abs(trendPercent)) / 12);
+  const consistentMoves = values.slice(1).filter((value, index) => Math.sign(value - values[index]) === Math.sign(trendPercent)).length;
+  const consistency = values.length > 1 ? consistentMoves / (values.length - 1) : 0;
+  const confidence = Math.round(Math.max(35, Math.min(90,
+    40 + coverage * 25 + signalStrength * 20 + consistency * 10 - Math.min(20, volatilityPercent * 1.5),
+  )));
+
+  return {
+    label,
+    text,
+    tone,
+    confidence,
+    observedCount: history.length,
+    trendPercent,
+    volatilityPercent,
+    deviationPercent,
+    chart,
+    delta,
+  };
 }
 
 function normalizeProduct(product: Product): Product {
+  const normalizedHistory = normalizePriceHistory(product.priceHistory);
   return {
     ...product,
+    imageUrl: typeof product.imageUrl === "string" && /^https:\/\//i.test(product.imageUrl) ? product.imageUrl : undefined,
+    priceHistory: normalizedHistory.length ? normalizedHistory : appendPriceObservation(undefined, product.price),
     offers: product.offers?.length
       ? product.offers
       : [{ id: `${product.id}-${product.source}`, store: product.source, price: product.price, url: product.url, note: "Основной магазин" }],
@@ -301,6 +396,8 @@ function withResolvedLisPrice(product: Product, resolved: ResolvedLisProduct): P
     oldPrice: placeholder ? resolved.priceRub : product.price,
     change,
     nextCheck: "проверено только что",
+    imageUrl: resolved.imageUrl ?? product.imageUrl,
+    priceHistory: appendPriceObservation(product.priceHistory, resolved.priceRub),
     offers: [lisOffer, ...(product.offers ?? []).filter((offer) => offer.store !== "LIS-SKINS")],
   };
 }
@@ -861,8 +958,9 @@ function ProductCard({ product, onFavorite, onDelete, onOpen }: { product: Produ
   const forecast = forecastFor(product);
   return (
     <article className="product-card" role="button" tabIndex={0} onClick={() => onOpen(product)} onKeyDown={(event) => event.key === "Enter" && onOpen(product)}>
-      <div className={`product-art ${product.artClass}`}>
+      <div className={`product-art ${product.artClass} ${product.imageUrl ? "has-preview" : ""}`}>
         <span>{product.art}</span>
+        {product.imageUrl && <img src={product.imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.hidden = true; event.currentTarget.parentElement?.classList.remove("has-preview"); }} />}
         <div className="art-grid" />
         <div className="source-badge">{product.source}</div>
         {(product.offers?.length ?? 0) > 1 && <div className="offer-count">{product.offers?.length} магазина</div>}
@@ -879,7 +977,7 @@ function ProductCard({ product, onFavorite, onDelete, onOpen }: { product: Produ
           </span>
         </div>
         <div className="price-row"><strong>{formatPrice(product.price)}</strong><s>{product.change !== 0 ? formatPrice(product.oldPrice) : ""}</s></div>
-        <div className={`prediction-row ${forecast.tone}`}><span>✦ {forecast.label}</span><small>{forecast.confidence}%</small></div>
+        <div className={`prediction-row ${forecast.tone}`}><span>✦ {forecast.label}</span><small>{forecast.confidence === null ? `${forecast.observedCount}/${MIN_FORECAST_POINTS} замера` : `${forecast.confidence}% доверие`}</small></div>
         <div className="monitor-row">
           <span className="pulse-dot" />
           <p>Проверка каждые {product.period} ч</p>
@@ -965,6 +1063,8 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
         art: isLis ? "CS" : "+",
         artClass: isLis ? "violet" : "blue",
         favorite: false,
+        imageUrl: resolved?.imageUrl ?? undefined,
+        priceHistory: [{ price: currentPrice, capturedAt: new Date(now).toISOString() }],
         target: target ? Number(target) : undefined,
         offers: [{
           id: `${now}-${parsedUrl.hostname}`,
@@ -1050,6 +1150,7 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAdd
   const formatPrice = usePriceFormatter();
   const [offerInputOpen, setOfferInputOpen] = useState(false);
   const [offerUrl, setOfferUrl] = useState("");
+  const [forecastOpen, setForecastOpen] = useState(false);
   const forecast = forecastFor(product);
   const offers = [...(product.offers ?? [])].sort((a, b) => a.price - b.price);
 
@@ -1059,22 +1160,51 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAdd
         <div className="modal-handle" />
         <button className="modal-close" onClick={onClose} aria-label="Закрыть">×</button>
         <div className="details-head">
-          <div className={`detail-art ${product.artClass}`}>{product.art}</div>
+          <div className={`detail-art ${product.artClass} ${product.imageUrl ? "has-preview" : ""}`}>
+            <span>{product.art}</span>
+            {product.imageUrl && <img src={product.imageUrl} alt="" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.hidden = true; event.currentTarget.parentElement?.classList.remove("has-preview"); }} />}
+          </div>
           <div><p>{product.source} · {product.category}</p><h2 id="detail-title">{product.name}</h2></div>
           <button className={`heart detail-heart ${product.favorite ? "liked" : ""}`} onClick={() => onFavorite(product.id)} aria-label="Избранное">{product.favorite ? "♥" : "♡"}</button>
         </div>
         <div className="detail-price"><div><span>Текущая цена</span><strong>{formatPrice(product.price)}</strong></div><span className={`trend ${product.change <= 0 ? "down" : "up"}`}>{product.change <= 0 ? "↓" : "↑"} {Math.abs(product.change)}%</span></div>
         <div className="chart-card">
-          <div className="chart-labels"><span>7 дней</span><b>{product.change <= 0 ? `−${formatPrice(264)}` : `+${formatPrice(232)}`}</b></div>
-          <div className="bar-chart" aria-label="График изменения цены за 7 дней">
-            {chartValues.map((value, index) => <i key={index} style={{ height: `${value + 18}%` }} />)}
+          <div className="chart-labels">
+            <span>{forecast.observedCount} {forecast.observedCount === 1 ? "замер" : "замеров"}</span>
+            <b>{forecast.delta === 0 ? "без изменения" : `${forecast.delta > 0 ? "+" : "−"}${formatPrice(Math.abs(forecast.delta))}`}</b>
+          </div>
+          <div className="bar-chart" aria-label="График реальных замеров цены">
+            {forecast.chart.map((value, index) => <i key={index} style={{ height: `${value}%` }} />)}
           </div>
         </div>
-        <div className={`forecast-card ${forecast.tone}`}>
+        <button
+          type="button"
+          className={`forecast-card ${forecast.tone}`}
+          onClick={() => setForecastOpen((current) => !current)}
+          aria-expanded={forecastOpen}
+          aria-controls={`forecast-method-${product.id}`}
+        >
           <span className="forecast-icon">✦</span>
-          <div><small>ПРОГНОЗ · ТОЧНОСТЬ {forecast.confidence}%</small><b>{forecast.label}</b><p>{forecast.text}</p></div>
-          <span className="forecast-arrow">→</span>
-        </div>
+          <span className="forecast-copy">
+            <small>{forecast.confidence === null ? "ДАННЫХ НЕДОСТАТОЧНО" : `СИГНАЛ · ДОВЕРИЕ МОДЕЛИ ${forecast.confidence}%`}</small>
+            <b>{forecast.label}</b>
+            <span>{forecast.text}</span>
+          </span>
+          <span className={`forecast-arrow ${forecastOpen ? "open" : ""}`}>→</span>
+        </button>
+        {forecastOpen && (
+          <div className="forecast-method" id={`forecast-method-${product.id}`}>
+            <b>Как считается сигнал</b>
+            <p>Используем только сохранённые замеры этого товара: линейный тренд, отклонение текущей цены от средней и волатильность.</p>
+            <dl>
+              <div><dt>Замеров</dt><dd>{forecast.observedCount}</dd></div>
+              <div><dt>Тренд</dt><dd>{forecast.trendPercent > 0 ? "+" : ""}{forecast.trendPercent.toFixed(1)}%</dd></div>
+              <div><dt>От средней</dt><dd>{forecast.deviationPercent > 0 ? "+" : ""}{forecast.deviationPercent.toFixed(1)}%</dd></div>
+              <div><dt>Волатильность</dt><dd>{forecast.volatilityPercent.toFixed(1)}%</dd></div>
+            </dl>
+            <small>Доверие модели — оценка качества сигнала, а не вероятность роста и не гарантия результата.</small>
+          </div>
+        )}
         <div className="target-row"><span>Целевая цена</span><b>{product.target ? formatPrice(product.target) : "Не задана"}</b></div>
 
         <div className="comparison-head">

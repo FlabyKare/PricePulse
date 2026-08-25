@@ -28,6 +28,11 @@ test("resolves the Titan Katowice sticker from the LIS-SKINS export", async () =
     if (url.includes("XML_daily.asp")) {
       return new Response('<ValCurs><Valute><CharCode>AUD</CharCode><VunitRate>59,2471</VunitRate></Valute><Valute><CharCode>USD</CharCode><VunitRate>82,9211</VunitRate></Valute></ValCurs>');
     }
+    if (url.includes("steamcommunity.com/market/listings/730/")) {
+      return new Response('<html><head><meta property="og:image" content="https://community.steamstatic.com/economy/image/test-preview"></head></html>', {
+        headers: { "content-type": "text/html; charset=utf-8" },
+      });
+    }
     throw new Error(`Unexpected outbound request: ${url}`);
   };
 
@@ -46,6 +51,7 @@ test("resolves the Titan Katowice sticker from the LIS-SKINS export", async () =
     assert.equal(body.exchangeRate, 85.4087);
     assert.equal(body.priceRub, 6358305.33);
     assert.equal(body.count, 1);
+    assert.equal(body.imageUrl, "https://community.steamstatic.com/economy/image/test-preview");
   } finally {
     globalThis.fetch = originalFetch;
   }
@@ -74,7 +80,7 @@ test("resolves an Ozon product from page metadata even when URL has only an id",
     const url = input instanceof Request ? input.url : String(input);
     if (url === "https://www.ozon.ru/product/1883746/") {
       return new Response(
-        '<html><head><meta property="og:title" content="Наушники Sony WH-1000XM5 — Ozon"></head><body><h1>Наушники Sony WH-1000XM5</h1><span>29 990 ₽</span></body></html>',
+        '<html><head><meta property="og:title" content="Наушники Sony WH-1000XM5 — Ozon"><meta property="og:image" content="https://cdn1.ozone.ru/s3/multimedia-test.jpg"></head><body><h1>Наушники Sony WH-1000XM5</h1><span>29 990 ₽</span></body></html>',
         { headers: { "content-type": "text/html; charset=utf-8" } },
       );
     }
@@ -94,6 +100,7 @@ test("resolves an Ozon product from page metadata even when URL has only an id",
     assert.equal(body.priceRub, 29990);
     assert.equal(body.needsManualPrice, false);
     assert.equal(body.resolvedBy, "page-content");
+    assert.equal(body.imageUrl, "https://cdn1.ozone.ru/s3/multimedia-test.jpg");
   } finally { globalThis.fetch = originalFetch; }
 });
 

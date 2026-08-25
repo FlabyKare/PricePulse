@@ -33,6 +33,8 @@ const SUPPORTED_STORES: StoreDefinition[] = [
 
 let catalogueCache: { items: LisSkinsExportItem[]; expiresAt: number } | null = null;
 let rateCache: { value: number; expiresAt: number } | null = null;
+const previewCache = new Map<string, { value: string | null; expiresAt: number }>();
+const PREVIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 function clean(value: string, limit = 180) {
   return value
@@ -75,6 +77,35 @@ function decodeEntities(value: string) {
     .replace(/&amp;/gi, "&")
     .replace(/&lt;/gi, "<")
     .replace(/&gt;/gi, ">");
+}
+
+function safeImageUrl(rawValue: string, baseUrl?: string) {
+  try {
+    const imageUrl = new URL(decodeEntities(rawValue), baseUrl);
+    const host = imageUrl.hostname.toLocaleLowerCase("en");
+    if (
+      imageUrl.protocol !== "https:"
+      || imageUrl.username
+      || imageUrl.password
+      || host === "localhost"
+      || host.endsWith(".local")
+      || /^(?:127\.|10\.|192\.168\.|169\.254\.)/.test(host)
+      || /^172\.(?:1[6-9]|2\d|3[01])\./.test(host)
+    ) return null;
+    return imageUrl.href.slice(0, 2_000);
+  } catch {
+    return null;
+  }
+}
+
+function imageFromPage(html: string, baseUrl: string) {
+  const rawImage = [
+    html.match(/<meta[^>]+property=["']og:image(?::secure_url)?["'][^>]+content=["']([^"']+)["']/i)?.[1],
+    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image(?::secure_url)?["']/i)?.[1],
+    html.match(/<meta[^>]+name=["']twitter:image["'][^>]+content=["']([^"']+)["']/i)?.[1],
+    html.match(/<meta[^>]+content=["']([^"']+)["'][^>]+name=["']twitter:image["']/i)?.[1],
+  ].find(Boolean);
+  return rawImage ? safeImageUrl(rawImage, baseUrl) : null;
 }
 
 function titleFromPage(html: string) {
@@ -129,6 +160,59 @@ async function fetchStorePage(url: URL, expectedStore: StoreDefinition, redirect
   return { html: (await response.text()).slice(0, 500_000), finalUrl: url.href };
 }
 
+async function readResponsePrefix(response: Response, maxBytes = 96 * 1024) {
+  if (!response.body) return (await response.text()).slice(0, maxBytes);
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let received = 0;
+  let output = "";
+  try {
+    while (received < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const remaining = maxBytes - received;
+      const chunk = value.byteLength > remaining ? value.slice(0, remaining) : value;
+      received += chunk.byteLength;
+      output += decoder.decode(chunk, { stream: received < maxBytes });
+      if (received >= maxBytes) {
+        await reader.cancel();
+        break;
+      }
+    }
+  } finally {
+    output += decoder.decode();
+  }
+  return output;
+}
+
+async function getSteamPreview(productName: string) {
+  const cacheKey = productName.toLocaleLowerCase("en");
+  const cached = previewCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  try {
+    const listingUrl = `https://steamcommunity.com/market/listings/730/${encodeURIComponent(productName)}`;
+    const response = await fetch(listingUrl, {
+      headers: {
+        accept: "text/html,application/xhtml+xml",
+        "accept-language": "en-US,en;q=0.9",
+        "user-agent": "Mozilla/5.0 (compatible; PricePulse/1.0; +https://pricepulse-app.bokcerkbr.chatgpt.site)",
+      },
+      cache: "no-store",
+      redirect: "error",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error(`Steam Market вернул ошибку ${response.status}`);
+    const imageUrl = imageFromPage(await readResponsePrefix(response), listingUrl);
+    const host = imageUrl ? new URL(imageUrl).hostname.toLocaleLowerCase("en") : "";
+    const value = host === "community.steamstatic.com" || host.endsWith(".steamstatic.com") ? imageUrl : null;
+    previewCache.set(cacheKey, { value, expiresAt: Date.now() + PREVIEW_CACHE_TTL_MS });
+    return value;
+  } catch {
+    previewCache.set(cacheKey, { value: null, expiresAt: Date.now() + 15 * 60 * 1000 });
+    return null;
+  }
+}
+
 async function getMarketplaceProduct(url: URL, requestedName: string) {
   const store = storeFor(url);
   if (!store) throw new Error("Этот магазин пока не поддерживает автоматическое распознавание");
@@ -145,6 +229,7 @@ async function getMarketplaceProduct(url: URL, requestedName: string) {
       count: 1,
       approximate: true,
       needsManualPrice: priceRub === null,
+      imageUrl: imageFromPage(page.html, page.finalUrl),
       resolvedBy: resolvedName ? "page-content" : "url-fallback",
     };
   } catch {
@@ -156,6 +241,7 @@ async function getMarketplaceProduct(url: URL, requestedName: string) {
       count: 1,
       approximate: true,
       needsManualPrice: true,
+      imageUrl: null,
       resolvedBy: "safe-fallback",
     };
   }
@@ -213,7 +299,10 @@ export async function POST(request: Request) {
     if (!item || !Number.isFinite(item.price) || item.price <= 0) {
       return Response.json({ error: "Товар не найден в актуальном каталоге LIS-SKINS" }, { status: 404 });
     }
-    const exchangeRate = await getUsdRubRate();
+    const [exchangeRate, imageUrl] = await Promise.all([
+      getUsdRubRate(),
+      getSteamPreview(item.name),
+    ]);
     return Response.json({
       source: "LIS-SKINS",
       name: item.name,
@@ -224,6 +313,7 @@ export async function POST(request: Request) {
       count: item.count,
       approximate: true,
       needsManualPrice: false,
+      imageUrl,
       resolvedBy: "official-catalogue",
     }, { headers: { "cache-control": "no-store" } });
   } catch (error) {

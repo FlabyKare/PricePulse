@@ -39,12 +39,13 @@ test("server-renders the PricePulse product", async () => {
 });
 
 test("removes the temporary starter preview", async () => {
-  const [css, page, aiViews, discoverRoute, cs2InvestmentsRoute, layout, packageJson] = await Promise.all([
+  const [css, page, aiViews, discoverRoute, cs2InvestmentsRoute, resolveRoute, layout, packageJson] = await Promise.all([
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/ai-views.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/discover/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/cs2-investments/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/products/resolve/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
@@ -68,10 +69,20 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /Обновить все цены/);
   assert.match(page, /проверяются по содержимому страницы/);
   assert.match(page, /resolveStoreProduct/);
+  assert.match(page, /MIN_FORECAST_POINTS = 3/);
+  assert.match(page, /ДОВЕРИЕ МОДЕЛИ/);
+  assert.match(page, /aria-expanded={forecastOpen}/);
+  assert.match(page, /priceHistory: appendPriceObservation/);
+  assert.doesNotMatch(page, /const chartValues = \[56, 48, 52/);
+  assert.match(page, /product\.imageUrl && <img/);
+  assert.match(resolveRoute, /steamcommunity\.com\/market\/listings\/730/);
+  assert.match(resolveRoute, /imageFromPage/);
   assert.match(page, /OpenRouter-ready/);
   assert.match(css, /profile-sync-badge/);
   assert.match(css, /\.primary-button[^}]*display:\s*inline-flex/s);
   assert.match(css, /currency-switch/);
+  assert.match(css, /product-art\.has-preview/);
+  assert.match(css, /forecast-method/);
   assert.ok(css.includes(".app-shell { min-height: 100vh; color: var(--ink);"));
   assert.ok(css.includes("--surface: #151713"));
   assert.ok(css.includes("background: var(--preview-surface)"));

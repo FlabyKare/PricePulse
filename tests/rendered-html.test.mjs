@@ -58,8 +58,8 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /onOpen/);
   assert.match(page, /revision: profileRevision\.current/);
   assert.match(page, /response\.status === 409/);
-  assert.match(profileRoute, /revision mismatch/);
-  assert.match(profileRoute, /revision: current\.revision \+ 1/);
+  assert.match(profileRoute, /stored\.revision !== state\.revision/);
+  assert.match(profileRoute, /profileStates\.revision\} \+ 1/);
   assert.match(page, /ИИ-поиск/);
   assert.match(aiViews, /enterKeyHint="search"/);
   assert.match(aiViews, /Разрешить и продолжить/);

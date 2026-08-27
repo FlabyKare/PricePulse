@@ -39,13 +39,14 @@ test("server-renders the PricePulse product", async () => {
 });
 
 test("removes the temporary starter preview", async () => {
-  const [css, page, aiViews, discoverRoute, cs2InvestmentsRoute, resolveRoute, layout, packageJson] = await Promise.all([
+  const [css, page, aiViews, discoverRoute, cs2InvestmentsRoute, resolveRoute, profileRoute, layout, packageJson] = await Promise.all([
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/ai-views.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/api/discover/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/cs2-investments/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/products/resolve/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/profile/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
@@ -53,11 +54,18 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /PricePulse/);
   assert.match(page, /localStorage/);
   assert.match(page, /deleteProduct/);
+  assert.match(page, /CollectionDetailsModal/);
+  assert.match(page, /onOpen/);
+  assert.match(page, /revision: profileRevision\.current/);
+  assert.match(page, /response\.status === 409/);
+  assert.match(profileRoute, /revision mismatch/);
+  assert.match(profileRoute, /revision: current\.revision \+ 1/);
   assert.match(page, /ИИ-поиск/);
   assert.match(aiViews, /enterKeyHint="search"/);
   assert.match(aiViews, /Разрешить и продолжить/);
   assert.match(aiViews, /pricepulse-external-search-consent/);
   assert.match(aiViews, /AI-КОНСУЛЬТАНТ ПО ПОКУПКЕ/);
+  assert.match(aiViews, /найденные прямые страницы товаров/);
   assert.match(aiViews, /CS2 ИНВЕСТ-РАДАР/);
   assert.match(aiViews, /offline-cs2-watchlist/);
   assert.ok(aiViews.includes("/api/cs2-investments"));
@@ -90,10 +98,12 @@ test("removes the temporary starter preview", async () => {
   assert.ok(page.includes('"--muted": `color-mix'));
   assert.match(page, /id: "forest".*paper: "#07140e".*ink: "#e7f5ea".*card: "#0c1f16"/);
   assert.match(css, /\.discovery-search input[^}]*font-size:\s*16px/s);
-  assert.match(discoverRoute, /steamcommunity\.com\/market\/search\?appid=730/);
+  assert.match(discoverRoute, /steamcommunity\.com\/market\/listings\/730/);
   assert.match(discoverRoute, /lis-skins\.com\/market_export_json\/csgo\.json/);
   assert.match(discoverRoute, /csfloat\.com\/search/);
-  assert.match(discoverRoute, /market\.csgo\.com\/en/);
+  assert.match(discoverRoute, /search\.wb\.ru\/exactmatch/);
+  assert.match(discoverRoute, /html\.duckduckgo\.com/);
+  assert.doesNotMatch(discoverRoute, /marketplaceFallback|Поиск по сайтам магазинов|ozon\.ru\/search/);
   assert.match(layout, /title: "PricePulse/);
   assert.match(layout, /telegram-web-app\.js/);
   assert.match(page, /body\.profile!\.username \?\? current\?\.username/);

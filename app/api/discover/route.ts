@@ -247,8 +247,31 @@ async function duckSearch(query: string, intent: SearchIntent, resultKind: "ма
   }
 }
 
+async function jinaSearch(query: string, intent: SearchIntent, resultKind: "магазин" | "обзор") {
+  try {
+    const domains = resultKind === "магазин" ? storeDomains(intent) : ["ixbt.com", "3dnews.ru", "mobile-review.com", "otzovik.com", "irecommend.ru"];
+    const scoped = domains.map((domain) => `site:${domain}`).join(" OR ");
+    const searchQuery = `${query} ${resultKind === "магазин" ? "цена купить" : "отзывы тест обзор"} (${scoped})`;
+    const response = await fetch(`https://s.jina.ai/${encodeURIComponent(searchQuery)}`, {
+      headers: { accept: "application/json", "x-retain-images": "none" }, cache: "no-store", signal: AbortSignal.timeout(12_000),
+    });
+    if (!response.ok) return [];
+    const payload = await response.json() as { data?: unknown };
+    if (!Array.isArray(payload.data)) return [];
+    return payload.data.flatMap((entry) => {
+      if (!entry || typeof entry !== "object") return [];
+      const item = entry as Record<string, unknown>;
+      const url = safeUrl(item.url);
+      if (!url || (resultKind === "магазин" ? !isDirectStoreUrl(url, intent) : !isReviewUrl(url))) return [];
+      const title = typeof item.title === "string" ? productName(item.title) : "";
+      const description = typeof item.description === "string" ? clean(item.description, 420) : "";
+      return title.length >= 3 ? [{ title, url, description, kind: resultKind } satisfies SearchResult] : [];
+    }).filter((result, position, all) => all.findIndex((item) => item.url === result.url) === position).slice(0, 12);
+  } catch { return []; }
+}
 function wbPrice(product: WbProduct) {
   const values = [
+
     ...(product.sizes ?? []).flatMap((size) => [Number(size.price?.product), Number(size.price?.total)]),
     Number(product.salePriceU),
   ].filter((value) => Number.isFinite(value) && value > 0);
@@ -622,14 +645,18 @@ export async function POST(request: Request) {
   if (intent === "cs2") {
     candidates = await lisCandidatesFor(query);
   } else {
-    const [wbResult, storeResult, reviewResult] = await Promise.allSettled([
+    const [wbResult, storeResult, reviewResult, jinaStoreResult, jinaReviewResult] = await Promise.allSettled([
       wildberriesCandidates(marketQuery),
       duckSearch(marketQuery, intent, "магазин"),
       duckSearch(marketQuery, intent, "обзор"),
+      jinaSearch(marketQuery, intent, "магазин"),
+      jinaSearch(marketQuery, intent, "обзор"),
     ]);
     const wbItems = wbResult.status === "fulfilled" ? wbResult.value : [];
-    const stores = storeResult.status === "fulfilled" ? storeResult.value : [];
-    const reviews = reviewResult.status === "fulfilled" ? reviewResult.value : [];
+    const stores = [...(storeResult.status === "fulfilled" ? storeResult.value : []), ...(jinaStoreResult.status === "fulfilled" ? jinaStoreResult.value : [])]
+      .filter((result, position, all) => all.findIndex((item) => item.url === result.url) === position);
+    const reviews = [...(reviewResult.status === "fulfilled" ? reviewResult.value : []), ...(jinaReviewResult.status === "fulfilled" ? jinaReviewResult.value : [])]
+      .filter((result, position, all) => all.findIndex((item) => item.url === result.url) === position);
     candidates = mergeMarketCandidates(query, wbItems, stores, reviews);
   }
 

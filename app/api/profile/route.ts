@@ -9,6 +9,7 @@ type ProfileStatePayload = {
   palette?: unknown;
   currency?: unknown;
   revision?: unknown;
+  deletedProductIds?: unknown;
 };
 
 const MAX_STATE_BYTES = 750_000;
@@ -47,6 +48,12 @@ function validatedState(payload: ProfileStatePayload) {
   if (!Number.isInteger(revision) || revision < 0) {
     throw new Error("Версия профиля повреждена");
   }
+  const deletedProductIds = Array.isArray(payload.deletedProductIds)
+    ? payload.deletedProductIds.filter((id): id is number => Number.isSafeInteger(id) && Number(id) > 0)
+    : [];
+  if (deletedProductIds.length > 250 || (payload.deletedProductIds !== undefined && deletedProductIds.length !== (payload.deletedProductIds as unknown[]).length)) {
+    throw new Error("Список удалённых товаров повреждён");
+  }
 
   const productsJson = JSON.stringify(payload.products);
   const collectionsJson = JSON.stringify(payload.collections);
@@ -58,7 +65,16 @@ function validatedState(payload: ProfileStatePayload) {
   if (productsJson.length + collectionsJson.length + paletteJson.length > MAX_STATE_BYTES) {
     throw new Error("Профиль превысил допустимый размер");
   }
-  return { productsJson, collectionsJson, paletteJson, currency, revision };
+  return { productsJson, collectionsJson, paletteJson, currency, revision, deletedProductIds };
+}
+
+function productIds(products: unknown) {
+  if (!Array.isArray(products)) return new Set<number>();
+  return new Set(products.flatMap((product) => {
+    if (!product || typeof product !== "object") return [];
+    const id = Number((product as { id?: unknown }).id);
+    return Number.isSafeInteger(id) && id > 0 ? [id] : [];
+  }));
 }
 
 async function upsertTelegramUser(user: NonNullable<Awaited<ReturnType<typeof authenticateTelegramRequest>>["user"]>) {
@@ -85,11 +101,11 @@ async function upsertTelegramUser(user: NonNullable<Awaited<ReturnType<typeof au
   });
 }
 
-async function conflictResponse(userId: string) {
+async function conflictResponse(userId: string, message = "Профиль изменился в другой сессии. Загружена свежая версия.") {
   const db = getDb();
   const [current] = await db.select().from(profileStates).where(eq(profileStates.userId, userId)).limit(1);
   return Response.json({
-    error: "Профиль изменился в другой сессии. Загружена свежая версия.",
+    error: message,
     conflict: true,
     state: current ? responseState(current) : null,
   }, { status: 409, headers: { "cache-control": "no-store" } });
@@ -147,6 +163,14 @@ export async function PUT(request: Request) {
     }
 
     if (stored.revision !== state.revision) return conflictResponse(auth.user.id);
+
+    const storedProductIds = productIds(parseJson(stored.productsJson, []));
+    const nextProductIds = productIds(payload.products);
+    const allowedDeletions = new Set(state.deletedProductIds);
+    const unexpectedlyMissing = [...storedProductIds].filter((id) => !nextProductIds.has(id) && !allowedDeletions.has(id));
+    if (unexpectedlyMissing.length) {
+      return conflictResponse(auth.user.id, "Сервер защитил сохранённые карточки от случайного сброса. Загружена последняя облачная версия.");
+    }
 
     const [saved] = await db.update(profileStates).set({
       productsJson: state.productsJson,

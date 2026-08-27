@@ -447,6 +447,7 @@ export default function Home() {
   const telegramInitData = useRef("");
   const profileRevision = useRef<number | null>(null);
   const skipNextRemoteSave = useRef(false);
+  const pendingProductDeletions = useRef<Set<number>>(new Set());
 
   useEffect(() => {
     const saved = window.localStorage.getItem("pricepulse-products");
@@ -625,17 +626,20 @@ export default function Home() {
     const timeout = window.setTimeout(() => {
       void (async () => {
         try {
+          const deletedProductIds = [...pendingProductDeletions.current];
           const response = await fetch("/api/profile", {
             method: "PUT",
             headers: {
               "content-type": "application/json",
               "x-telegram-init-data": telegramInitData.current,
             },
-            body: JSON.stringify({ products, collections, palette, currency, revision: profileRevision.current }),
+            body: JSON.stringify({ products, collections, palette, currency, revision: profileRevision.current, deletedProductIds }),
+            keepalive: true,
           });
           const body = await response.json() as ProfileApiResponse;
           if (response.status === 409 && body.state) {
             profileRevision.current = body.state.revision;
+            pendingProductDeletions.current.clear();
             skipNextRemoteSave.current = true;
             setProducts(body.state.products.map(normalizeProduct));
             setCollections(body.state.collections);
@@ -647,6 +651,7 @@ export default function Home() {
           }
           if (!response.ok) throw new Error(body.error || "Не удалось сохранить профиль");
           if (typeof body.revision === "number") profileRevision.current = body.revision;
+          deletedProductIds.forEach((id) => pendingProductDeletions.current.delete(id));
           setSyncStatus("synced");
           setSyncMessage("Все карточки сохранены в Telegram-профиле");
         } catch (error) {
@@ -654,7 +659,7 @@ export default function Home() {
           setSyncMessage(error instanceof Error ? error.message : "Не удалось сохранить изменения");
         }
       })();
-    }, 650);
+    }, 120);
     return () => window.clearTimeout(timeout);
   }, [products, collections, palette, currency, loaded, remoteReady]);
 
@@ -731,6 +736,7 @@ export default function Home() {
   function deleteProduct(id: number) {
     const product = products.find((item) => item.id === id);
     if (!product || !window.confirm(`Удалить карточку «${product.name}»?`)) return;
+    pendingProductDeletions.current.add(id);
     setProducts((current) => current.filter((item) => item.id !== id));
     setCollections((current) => current.map((collection) => ({
       ...collection,
@@ -1294,20 +1300,13 @@ function CollectionsView({ collections, products, onShare, onOpen, onCreate }: {
           const items = products.filter((product) => collection.productIds.includes(product.id));
           const total = items.reduce((sum, item) => sum + item.price, 0);
           return (
-            <article
-              className="collection-card"
-              key={collection.id}
-              role="button"
-              tabIndex={0}
-              aria-label={`Открыть подборку ${collection.name}`}
-              onClick={() => onOpen(collection)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  onOpen(collection);
-                }
-              }}
-            >
+            <article className="collection-card" key={collection.id}>
+              <button
+                type="button"
+                className="collection-card-open"
+                aria-label={`Открыть подборку ${collection.name}`}
+                onClick={() => onOpen(collection)}
+              >
               <div className={`collection-cover cover-${collectionIndex % 3}`}>
                 <div className="collection-stack">
                   {items.slice(0, 3).map((item) => (
@@ -1316,13 +1315,14 @@ function CollectionsView({ collections, products, onShare, onOpen, onCreate }: {
                     </span>
                   ))}
                 </div>
-                <button onClick={(event) => { event.stopPropagation(); void onShare(collection); }} aria-label={`Поделиться подборкой ${collection.name}`}>↗</button>
               </div>
               <div className="collection-body">
                 <p>{items.length} {items.length === 1 ? "товар" : "товара"} · {formatPrice(total)}</p>
                 <h3>{collection.name}</h3>
-                <button type="button" onClick={(event) => { event.stopPropagation(); onOpen(collection); }}>Открыть товары <span>→</span></button>
+                <span className="collection-open-label">Открыть товары <i>→</i></span>
               </div>
+              </button>
+              <button className="collection-share" type="button" onClick={() => void onShare(collection)} aria-label={`Поделиться подборкой ${collection.name}`}>↗</button>
             </article>
           );
         })}

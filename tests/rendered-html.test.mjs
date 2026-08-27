@@ -58,6 +58,10 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /onOpen/);
   assert.match(page, /revision: profileRevision\.current/);
   assert.match(page, /response\.status === 409/);
+  assert.match(page, /pendingProductDeletions/);
+  assert.match(page, /collection-card-open/);
+  assert.match(profileRoute, /unexpectedlyMissing/);
+  assert.match(profileRoute, /deletedProductIds/);
   assert.match(profileRoute, /stored\.revision !== state\.revision/);
   assert.match(profileRoute, /profileStates\.revision\} \+ 1/);
   assert.match(page, /ИИ-поиск/);
@@ -103,6 +107,8 @@ test("removes the temporary starter preview", async () => {
   assert.match(discoverRoute, /csfloat\.com\/search/);
   assert.match(discoverRoute, /search\.wb\.ru\/exactmatch/);
   assert.match(discoverRoute, /html\.duckduckgo\.com/);
+  assert.match(discoverRoute, /s\.jina\.ai/);
+  assert.match(discoverRoute, /jinaSearch/);
   assert.doesNotMatch(discoverRoute, /marketplaceFallback|Поиск по сайтам магазинов|ozon\.ru\/search/);
   assert.match(layout, /title: "PricePulse/);
   assert.match(layout, /telegram-web-app\.js/);

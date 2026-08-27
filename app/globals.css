@@ -293,15 +293,17 @@ select, .standalone-input { width: 100%; height: 50px; padding: 0 13px; border: 
 .shared-demo b { color: #aeb2a8; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .shared-demo i { font-style: normal; color: var(--lime); font-size: 15px; }
 .collection-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; }
-.collection-card { overflow: hidden; border: 1px solid var(--line); border-radius: 20px; background: var(--card); cursor: pointer; outline: none; transition: transform .2s ease, box-shadow .2s ease; }
-.collection-card:hover, .collection-card:focus-visible { transform: translateY(-3px); box-shadow: var(--shadow); }
-.collection-card:focus-visible { box-shadow: 0 0 0 2px var(--lime), var(--shadow); }
+.collection-card { position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 20px; background: var(--card); transition: transform .2s ease, box-shadow .2s ease; }
+.collection-card:hover, .collection-card:focus-within { transform: translateY(-3px); box-shadow: var(--shadow); }
+.collection-card:focus-within { box-shadow: 0 0 0 2px var(--lime), var(--shadow); }
+.collection-card-open { width: 100%; display: block; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.collection-card-open:focus-visible { outline: none; }
 .collection-cover { position: relative; height: 175px; display: grid; place-items: center; overflow: hidden; }
 .cover-0 { background: linear-gradient(135deg, var(--accent-2), color-mix(in srgb, var(--accent-2) 35%, var(--accent-3))); }
 .cover-1 { background: linear-gradient(135deg, var(--accent-3), color-mix(in srgb, var(--accent-3) 35%, var(--lime))); }
 .cover-2 { background: linear-gradient(135deg, var(--lime), var(--accent-2)); }
 .collection-cover::after { content: ""; position: absolute; inset: 16px; border: 1px solid rgba(255,255,255,.25); border-radius: 50%; transform: scale(1.5); }
-.collection-cover > button { position: absolute; z-index: 3; right: 13px; top: 13px; width: 34px; height: 34px; border: 0; border-radius: 50%; background: rgba(255,255,255,.88); cursor: pointer; font-size: 16px; }
+.collection-share { position: absolute; z-index: 4; right: 13px; top: 13px; width: 34px; height: 34px; border: 0; border-radius: 50%; background: rgba(255,255,255,.88); color: #151713; cursor: pointer; font-size: 16px; }
 .collection-stack { position: relative; z-index: 2; display: flex; align-items: center; justify-content: center; }
 .collection-stack > span { display: grid; place-items: center; width: 72px; height: 72px; margin-left: -16px; border: 3px solid rgba(255,255,255,.7); border-radius: 20px; color: white; font-size: 20px; font-weight: 950; font-style: italic; box-shadow: 0 12px 30px rgba(0,0,0,.18); transform: rotate(-7deg); }
 .collection-stack > span:first-child { margin-left: 0; transform: rotate(6deg); }
@@ -314,8 +316,8 @@ select, .standalone-input { width: 100%; height: 50px; padding: 0 13px; border: 
 .collection-body { padding: 17px 18px 18px; }
 .collection-body p { margin: 0 0 5px; color: var(--muted); font-size: 9px; }
 .collection-body h3 { margin: 0 0 16px; font-size: 17px; letter-spacing: -.5px; }
-.collection-body button { width: 100%; display: flex; justify-content: space-between; border: 0; border-top: 1px solid #eeede8; padding: 13px 0 0; background: none; font-size: 10px; font-weight: 850; cursor: pointer; }
-.collection-body button span { color: var(--accent-2); font-size: 16px; }
+.collection-open-label { width: 100%; display: flex; align-items: center; justify-content: space-between; border-top: 1px solid var(--line); padding: 13px 0 0; font-size: 10px; font-weight: 850; }
+.collection-open-label i { color: var(--accent-2); font-size: 16px; font-style: normal; }
 
 .collection-modal, .collection-details-modal { width: min(540px, 100%); }
 .collection-details-list { display: grid; gap: 8px; margin-top: 18px; }

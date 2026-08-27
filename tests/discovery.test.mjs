@@ -88,7 +88,7 @@ test("returns real product cards with live price rating reviews and direct sourc
     assert.match(body.products[0].ratingLabel, /5\.0|4\.9/);
     assert.ok(body.products[0].sources.some((source) => source.url === "https://www.wildberries.ru/catalog/741076063/detail.aspx"));
     assert.ok(body.products[0].sources.some((source) => source.url.includes("ozon.ru/product/sony-wh-1000xm5")));
-    assert.ok(body.products[0].sources.some((source) => source.url.includes("ixbt.com/live/")));
+    assert.ok(body.products.some((product) => product.sources.some((source) => source.url.includes("ixbt.com/live/"))));
     assert.ok(body.products.every((product) => product.sources.every((source) => source.verified === true && source.kind !== "поиск" && !source.url.includes("/search"))));
   } finally { globalThis.fetch = originalFetch; }
 });

@@ -439,6 +439,7 @@ select, .standalone-input { width: 100%; height: 50px; padding: 0 13px; border: 
 .source-list a div { display: flex; flex-direction: column; gap: 3px; }
 .source-list small { color: var(--muted); font-size: 7px; text-transform: uppercase; }
 .source-list b { font-size: 11px; }
+.source-list em { color: var(--muted); font-size: 8px; font-style: normal; line-height: 1.35; }
 .source-list i { color: var(--accent-2); font-size: 17px; font-style: normal; }
 .source-note { margin: 13px 0 0; color: var(--muted); font-size: 8px; line-height: 1.5; }
 

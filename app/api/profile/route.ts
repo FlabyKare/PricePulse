@@ -1,4 +1,4 @@
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { profileStates, telegramUsers } from "@/db/schema";
 import { authenticateTelegramRequest } from "@/lib/telegram-auth";
@@ -8,6 +8,7 @@ type ProfileStatePayload = {
   collections?: unknown;
   palette?: unknown;
   currency?: unknown;
+  revision?: unknown;
 };
 
 const MAX_STATE_BYTES = 750_000;
@@ -18,6 +19,17 @@ function parseJson<T>(value: string, fallback: T): T {
   } catch {
     return fallback;
   }
+}
+
+function responseState(stored: typeof profileStates.$inferSelect) {
+  return {
+    products: parseJson(stored.productsJson, []),
+    collections: parseJson(stored.collectionsJson, []),
+    palette: parseJson(stored.paletteJson, {}),
+    currency: stored.currency,
+    revision: stored.revision,
+    updatedAt: stored.updatedAt,
+  };
 }
 
 function validatedState(payload: ProfileStatePayload) {
@@ -31,6 +43,11 @@ function validatedState(payload: ProfileStatePayload) {
     throw new Error("Палитра повреждена");
   }
 
+  const revision = Number(payload.revision);
+  if (!Number.isInteger(revision) || revision < 0) {
+    throw new Error("Версия профиля повреждена");
+  }
+
   const productsJson = JSON.stringify(payload.products);
   const collectionsJson = JSON.stringify(payload.collections);
   const paletteJson = JSON.stringify(payload.palette);
@@ -41,7 +58,7 @@ function validatedState(payload: ProfileStatePayload) {
   if (productsJson.length + collectionsJson.length + paletteJson.length > MAX_STATE_BYTES) {
     throw new Error("Профиль превысил допустимый размер");
   }
-  return { productsJson, collectionsJson, paletteJson, currency };
+  return { productsJson, collectionsJson, paletteJson, currency, revision };
 }
 
 async function upsertTelegramUser(user: NonNullable<Awaited<ReturnType<typeof authenticateTelegramRequest>>["user"]>) {
@@ -68,6 +85,16 @@ async function upsertTelegramUser(user: NonNullable<Awaited<ReturnType<typeof au
   });
 }
 
+async function conflictResponse(userId: string) {
+  const db = getDb();
+  const [current] = await db.select().from(profileStates).where(eq(profileStates.userId, userId)).limit(1);
+  return Response.json({
+    error: "Профиль изменился в другой сессии. Загружена свежая версия.",
+    conflict: true,
+    state: current ? responseState(current) : null,
+  }, { status: 409, headers: { "cache-control": "no-store" } });
+}
+
 export async function GET(request: Request) {
   const auth = await authenticateTelegramRequest(request);
   if (!auth.user) return auth.response;
@@ -78,14 +105,7 @@ export async function GET(request: Request) {
     const [stored] = await db.select().from(profileStates).where(eq(profileStates.userId, auth.user.id)).limit(1);
     return Response.json({
       profile: auth.user,
-      state: stored ? {
-        products: parseJson(stored.productsJson, []),
-        collections: parseJson(stored.collectionsJson, []),
-        palette: parseJson(stored.paletteJson, {}),
-        currency: stored.currency,
-        revision: stored.revision,
-        updatedAt: stored.updatedAt,
-      } : null,
+      state: stored ? responseState(stored) : null,
     }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     return Response.json(
@@ -104,24 +124,49 @@ export async function PUT(request: Request) {
     const state = validatedState(payload);
     await upsertTelegramUser(auth.user);
     const db = getDb();
-    await db.insert(profileStates).values({
-      userId: auth.user.id,
-      ...state,
-    }).onConflictDoUpdate({
-      target: profileStates.userId,
-      set: {
-        ...state,
-        revision: sql`${profileStates.revision} + 1`,
-        updatedAt: sql`CURRENT_TIMESTAMP`,
-      },
-    });
-    const [saved] = await db.select({
+    const [stored] = await db.select().from(profileStates).where(eq(profileStates.userId, auth.user.id)).limit(1);
+
+    if (!stored) {
+      if (state.revision !== 0) return conflictResponse(auth.user.id);
+      try {
+        const [created] = await db.insert(profileStates).values({
+          userId: auth.user.id,
+          productsJson: state.productsJson,
+          collectionsJson: state.collectionsJson,
+          paletteJson: state.paletteJson,
+          currency: state.currency,
+          revision: 1,
+        }).returning({
+          revision: profileStates.revision,
+          updatedAt: profileStates.updatedAt,
+        });
+        return Response.json({ saved: true, ...created }, { headers: { "cache-control": "no-store" } });
+      } catch {
+        return conflictResponse(auth.user.id);
+      }
+    }
+
+    if (stored.revision !== state.revision) return conflictResponse(auth.user.id);
+
+    const [saved] = await db.update(profileStates).set({
+      productsJson: state.productsJson,
+      collectionsJson: state.collectionsJson,
+      paletteJson: state.paletteJson,
+      currency: state.currency,
+      revision: sql`${profileStates.revision} + 1`,
+      updatedAt: sql`CURRENT_TIMESTAMP`,
+    }).where(and(
+      eq(profileStates.userId, auth.user.id),
+      eq(profileStates.revision, state.revision),
+    )).returning({
       revision: profileStates.revision,
       updatedAt: profileStates.updatedAt,
-    }).from(profileStates).where(eq(profileStates.userId, auth.user.id)).limit(1);
+    });
+
+    if (!saved) return conflictResponse(auth.user.id);
     return Response.json({ saved: true, ...saved }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Не удалось сохранить профиль";
-    return Response.json({ error: message }, { status: /поврежд|размер/.test(message) ? 400 : 500 });
+    return Response.json({ error: message }, { status: /поврежд|размер|валют|Версия/.test(message) ? 400 : 500 });
   }
 }

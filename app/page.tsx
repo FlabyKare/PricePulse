@@ -102,6 +102,9 @@ type ProfileApiResponse = {
     revision: number;
     updatedAt: string;
   } | null;
+  saved?: boolean;
+  revision?: number;
+  conflict?: boolean;
   error?: string;
 };
 
@@ -431,6 +434,7 @@ export default function Home() {
   const [addOpen, setAddOpen] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
   const [collectionOpen, setCollectionOpen] = useState(false);
+  const [selectedCollection, setSelectedCollection] = useState<Collection | null>(null);
   const [selected, setSelected] = useState<Product | null>(null);
   const [toast, setToast] = useState("");
   const [loaded, setLoaded] = useState(false);
@@ -441,6 +445,8 @@ export default function Home() {
   const [syncMessage, setSyncMessage] = useState("Подключаем Telegram-профиль…");
   const automaticRefreshStarted = useRef(false);
   const telegramInitData = useRef("");
+  const profileRevision = useRef<number | null>(null);
+  const skipNextRemoteSave = useRef(false);
 
   useEffect(() => {
     const saved = window.localStorage.getItem("pricepulse-products");
@@ -539,12 +545,16 @@ export default function Home() {
           return mergedProfile;
         });
         if (body.state) {
+          profileRevision.current = body.state.revision;
+          skipNextRemoteSave.current = true;
           setProducts(body.state.products.map(normalizeProduct));
           setCollections(body.state.collections);
           if (body.state.palette?.accent) setPalette(body.state.palette);
           if (body.state.currency === "RUB" || body.state.currency === "USD" || body.state.currency === "EUR") {
             setCurrency(body.state.currency);
           }
+        } else {
+          profileRevision.current = 0;
         }
         setRemoteReady(true);
         setSyncStatus("synced");
@@ -605,9 +615,13 @@ export default function Home() {
   }, [collections, palette, currency, loaded]);
 
   useEffect(() => {
-    if (!loaded || !remoteReady || !telegramInitData.current) return;
+    if (!loaded || !remoteReady || !telegramInitData.current || profileRevision.current === null) return;
+    if (skipNextRemoteSave.current) {
+      skipNextRemoteSave.current = false;
+      return;
+    }
     setSyncStatus("saving");
-    setSyncMessage("Сохраняем изменения…");
+    setSyncMessage(profileRevision.current === 0 ? "Переносим карточки в облачную память…" : "Сохраняем изменения…");
     const timeout = window.setTimeout(() => {
       void (async () => {
         try {
@@ -617,12 +631,24 @@ export default function Home() {
               "content-type": "application/json",
               "x-telegram-init-data": telegramInitData.current,
             },
-            body: JSON.stringify({ products, collections, palette, currency }),
+            body: JSON.stringify({ products, collections, palette, currency, revision: profileRevision.current }),
           });
-          const body = await response.json() as { error?: string };
+          const body = await response.json() as ProfileApiResponse;
+          if (response.status === 409 && body.state) {
+            profileRevision.current = body.state.revision;
+            skipNextRemoteSave.current = true;
+            setProducts(body.state.products.map(normalizeProduct));
+            setCollections(body.state.collections);
+            if (body.state.palette?.accent) setPalette(body.state.palette);
+            if (body.state.currency === "RUB" || body.state.currency === "USD" || body.state.currency === "EUR") setCurrency(body.state.currency);
+            setSyncStatus("synced");
+            setSyncMessage("Загружена более свежая версия Telegram-профиля");
+            return;
+          }
           if (!response.ok) throw new Error(body.error || "Не удалось сохранить профиль");
+          if (typeof body.revision === "number") profileRevision.current = body.revision;
           setSyncStatus("synced");
-          setSyncMessage("Все изменения сохранены в Telegram-профиле");
+          setSyncMessage("Все карточки сохранены в Telegram-профиле");
         } catch (error) {
           setSyncStatus("error");
           setSyncMessage(error instanceof Error ? error.message : "Не удалось сохранить изменения");
@@ -850,7 +876,7 @@ export default function Home() {
       ) : activeNav === "Профиль" ? (
         <ProfileView products={products} palette={palette} profile={profile} syncStatus={syncStatus} currency={currency} ratesReady={rates.USD > 0 && rates.EUR > 0} onCurrency={setCurrency} onRefreshAll={refreshAllPrices} onTheme={() => setThemeOpen(true)} />
       ) : activeNav === "Подборки" ? (
-        <CollectionsView collections={collections} products={products} onShare={shareCollection} onCreate={() => setCollectionOpen(true)} />
+        <CollectionsView collections={collections} products={products} onShare={shareCollection} onOpen={setSelectedCollection} onCreate={() => setCollectionOpen(true)} />
       ) : (
         <>
           <section className="welcome-row">
@@ -932,6 +958,15 @@ export default function Home() {
       {addOpen && <AddProductModal onClose={() => setAddOpen(false)} onAdd={addProduct} categories={categories.filter((item) => item !== "Все")} />}
       {themeOpen && <ThemeModal palette={palette} onApply={(next) => { setPalette(next); setThemeOpen(false); setToast(`Палитра «${next.name}» включена`); }} onClose={() => setThemeOpen(false)} />}
       {collectionOpen && <CollectionModal products={products} onClose={() => setCollectionOpen(false)} onCreate={(collection) => { setCollections((current) => [collection, ...current]); setCollectionOpen(false); setToast("Подборка создана — теперь ей можно делиться"); }} />}
+      {selectedCollection && (
+        <CollectionDetailsModal
+          collection={collections.find((collection) => collection.id === selectedCollection.id) ?? selectedCollection}
+          products={products}
+          onClose={() => setSelectedCollection(null)}
+          onShare={shareCollection}
+          onOpenProduct={(product) => { setSelectedCollection(null); setSelected(product); }}
+        />
+      )}
       {selected && (
         <ProductDetails
           product={products.find((product) => product.id === selected.id) ?? selected}
@@ -1242,7 +1277,7 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAdd
   );
 }
 
-function CollectionsView({ collections, products, onShare, onCreate }: { collections: Collection[]; products: Product[]; onShare: (collection: Collection) => void; onCreate: () => void }) {
+function CollectionsView({ collections, products, onShare, onOpen, onCreate }: { collections: Collection[]; products: Product[]; onShare: (collection: Collection) => void; onOpen: (collection: Collection) => void; onCreate: () => void }) {
   const formatPrice = usePriceFormatter();
   return (
     <section className="collections-view">
@@ -1251,7 +1286,7 @@ function CollectionsView({ collections, products, onShare, onCreate }: { collect
         <button className="outline-add collection-add" onClick={onCreate}><span>＋</span> Новая подборка</button>
       </div>
       <div className="collections-hero">
-        <div><span>⇧</span><h2>Соберите товары вместе</h2><p>Отправьте одну ссылку — друг получит всю подборку с ценами и настройками мониторинга.</p></div>
+        <div><span>⇧</span><h2>Соберите товары вместе</h2><p>Откройте подборку, быстро просмотрите товары или отправьте одну ссылку другу.</p></div>
         <div className="shared-demo"><span>pricepulse.app</span><b>/collection/your-list</b><i>↗</i></div>
       </div>
       <div className="collection-grid">
@@ -1259,19 +1294,70 @@ function CollectionsView({ collections, products, onShare, onCreate }: { collect
           const items = products.filter((product) => collection.productIds.includes(product.id));
           const total = items.reduce((sum, item) => sum + item.price, 0);
           return (
-            <article className="collection-card" key={collection.id}>
+            <article
+              className="collection-card"
+              key={collection.id}
+              role="button"
+              tabIndex={0}
+              aria-label={`Открыть подборку ${collection.name}`}
+              onClick={() => onOpen(collection)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onOpen(collection);
+                }
+              }}
+            >
               <div className={`collection-cover cover-${collectionIndex % 3}`}>
                 <div className="collection-stack">
-                  {items.slice(0, 3).map((item) => <span key={item.id} className={item.artClass}>{item.art}</span>)}
+                  {items.slice(0, 3).map((item) => (
+                    <span key={item.id} className={`${item.artClass} ${item.imageUrl ? "has-image" : ""}`}>
+                      {item.imageUrl ? <img src={item.imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" /> : item.art}
+                    </span>
+                  ))}
                 </div>
-                <button onClick={() => onShare(collection)} aria-label={`Поделиться подборкой ${collection.name}`}>↗</button>
+                <button onClick={(event) => { event.stopPropagation(); void onShare(collection); }} aria-label={`Поделиться подборкой ${collection.name}`}>↗</button>
               </div>
-              <div className="collection-body"><p>{items.length} товара · {formatPrice(total)}</p><h3>{collection.name}</h3><button onClick={() => onShare(collection)}>Поделиться ссылкой <span>→</span></button></div>
+              <div className="collection-body">
+                <p>{items.length} {items.length === 1 ? "товар" : "товара"} · {formatPrice(total)}</p>
+                <h3>{collection.name}</h3>
+                <button type="button" onClick={(event) => { event.stopPropagation(); onOpen(collection); }}>Открыть товары <span>→</span></button>
+              </div>
             </article>
           );
         })}
       </div>
     </section>
+  );
+}
+
+function CollectionDetailsModal({ collection, products, onClose, onShare, onOpenProduct }: { collection: Collection; products: Product[]; onClose: () => void; onShare: (collection: Collection) => void; onOpenProduct: (product: Product) => void }) {
+  const formatPrice = usePriceFormatter();
+  const items = products.filter((product) => collection.productIds.includes(product.id));
+  const total = items.reduce((sum, product) => sum + product.price, 0);
+  return (
+    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="modal collection-details-modal" role="dialog" aria-modal="true" aria-labelledby="collection-details-title">
+        <div className="modal-handle" />
+        <button className="modal-close" onClick={onClose} aria-label="Закрыть">×</button>
+        <div className="modal-kicker"><span>⇧</span> ПОДБОРКА</div>
+        <h2 id="collection-details-title">{collection.name}</h2>
+        <p className="modal-lead">{items.length} {items.length === 1 ? "товар" : "товара"} · всего {formatPrice(total)}</p>
+        <div className="collection-details-list">
+          {items.map((product) => (
+            <button type="button" key={product.id} onClick={() => onOpenProduct(product)}>
+              <span className={`mini-art ${product.artClass} ${product.imageUrl ? "has-image" : ""}`}>
+                {product.imageUrl ? <img src={product.imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" /> : product.art}
+              </span>
+              <span><b>{product.name}</b><small>{product.source} · {formatPrice(product.price)}</small></span>
+              <i>→</i>
+            </button>
+          ))}
+          {!items.length && <div className="collection-details-empty">В этой подборке пока нет доступных карточек.</div>}
+        </div>
+        <button className="secondary-button collection-share-button" type="button" onClick={() => void onShare(collection)}>Поделиться подборкой <span>↗</span></button>
+      </section>
+    </div>
   );
 }
 

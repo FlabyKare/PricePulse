@@ -42,6 +42,9 @@ test("returns real product cards with live price rating reviews and direct sourc
   globalThis.fetch = async (input) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url.includes("search.wb.ru")) {
+      const decodedUrl = decodeURIComponent(url).replace(/\+/g, " ");
+      assert.match(decodedUrl, /Sony WH-1000XM5/);
+      assert.doesNotMatch(decodedUrl, /до 30 000/);
       return Response.json({ products: [
         {
           id: 741076063,

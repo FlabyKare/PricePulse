@@ -191,6 +191,15 @@ function budgetFromQuery(query: string) {
   return Number.isFinite(value) && value > 0 ? value : null;
 }
 
+function catalogueQuery(query: string) {
+  const cleaned = query
+    .replace(/(?:до|бюджет(?:ом)?|не дороже)\s*\d[\d\s]{2,8}(?:\s*(?:₽|руб(?:\.|лей)?))?/gi, " ")
+    .replace(/\b(?:купить|цена|цены|отзывы|обзор|лучший|лучшие|подбери|найди)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return cleaned.length >= 2 ? cleaned : query;
+}
+
 function parseDuckResults(html: string, intent: SearchIntent, resultKind: "магазин" | "обзор") {
   const results: SearchResult[] = [];
   const anchorPattern = /<a[^>]*class=["'][^"']*\bresult__a\b[^"']*["'][^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
@@ -608,14 +617,15 @@ export async function POST(request: Request) {
   }
 
   const intent = inferIntent(query);
+  const marketQuery = catalogueQuery(query);
   let candidates: Candidate[] = [];
   if (intent === "cs2") {
     candidates = await lisCandidatesFor(query);
   } else {
     const [wbResult, storeResult, reviewResult] = await Promise.allSettled([
-      wildberriesCandidates(query),
-      duckSearch(query, intent, "магазин"),
-      duckSearch(query, intent, "обзор"),
+      wildberriesCandidates(marketQuery),
+      duckSearch(marketQuery, intent, "магазин"),
+      duckSearch(marketQuery, intent, "обзор"),
     ]);
     const wbItems = wbResult.status === "fulfilled" ? wbResult.value : [];
     const stores = storeResult.status === "fulfilled" ? storeResult.value : [];

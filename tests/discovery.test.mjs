@@ -63,7 +63,7 @@ test("returns real product cards with live price rating reviews and direct sourc
     }
     if (url.includes("html.duckduckgo.com")) {
       const decoded = decodeURIComponent(url);
-      if (decoded.includes("отзывы обзор")) {
+      if (decoded.includes("отзывы") && decoded.includes("обзор")) {
         return new Response(
           '<a class="result__a" href="https://www.ixbt.com/live/digs/sony-wh-1000xm5-review.html">Sony WH-1000XM5 — обзор</a>' +
           '<div class="result__snippet">Подробный тест шумоподавления и автономности.</div>',

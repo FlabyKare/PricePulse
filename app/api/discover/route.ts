@@ -281,7 +281,7 @@ async function wildberriesCandidates(query: string): Promise<Candidate[]> {
       const ratingValue = Number(product.rating);
       const reviewCount = Number(product.feedbacks);
       if (!Number.isInteger(id) || id <= 0 || !rawName || !priceValue) return [];
-      if (budget && priceValue > budget * 1.15) return [];
+      if (budget && priceValue > budget) return [];
       const name = brand && !rawName.toLocaleLowerCase("ru").includes(brand.toLocaleLowerCase("ru"))
         ? brand + " " + rawName
         : rawName;
@@ -399,7 +399,7 @@ function mergeMarketCandidates(query: string, wbItems: Candidate[], stores: Sear
   const budget = budgetFromQuery(query);
   const queryTokenCount = Math.max(1, queryTokens(query).length);
   return candidates
-    .filter((candidate) => !budget || !candidate.priceValue || candidate.priceValue <= budget * 1.15)
+    .filter((candidate) => !budget || !candidate.priceValue || candidate.priceValue <= budget)
     .map((candidate) => ({
       candidate,
       relevance: tokenScore(query, candidate.name + " " + candidate.description) / queryTokenCount,

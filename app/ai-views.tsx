@@ -14,7 +14,7 @@ type ProductContext = {
   offers?: Array<{ store: string; price: number; url: string }>;
 };
 
-type DiscoverySource = { title: string; url: string; kind: "магазин" | "обзор" | "поиск" };
+type DiscoverySource = { title: string; url: string; kind: "магазин" | "обзор"; priceLabel?: string; ratingLabel?: string; verified: true };
 type DiscoveryProduct = {
   id: string;
   name: string;
@@ -25,7 +25,7 @@ type DiscoveryProduct = {
   sourceCount: number;
   sources: DiscoverySource[];
 };
-type DiscoveryResponse = { summary: string; products: DiscoveryProduct[]; error?: string };
+type DiscoveryResponse = { summary: string; products: DiscoveryProduct[]; engine?: string; checkedAt?: string; error?: string };
 type AssistantSource = { title: string; url: string; description: string };
 type AssistantMessage = { id: string; role: "user" | "assistant"; content: string; sources?: AssistantSource[] };
 type AssistantResponse = { answer?: string; mode?: string; sources?: AssistantSource[]; followUps?: string[]; error?: string };
@@ -170,7 +170,7 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
     if (!consentGranted) {
       setQuery(finalQuery); setPendingText(finalQuery); setPendingAction("search"); setConsentOpen(true); setError(""); return;
     }
-    setQuery(finalQuery); setLoading(true); setError("");
+    setQuery(finalQuery); setLoading(true); setError(""); setResults([]); setSummary(""); setSelected(null);
     try {
       const response = await fetch("/api/discover", {
         method: "POST", headers: { "content-type": "application/json" },
@@ -178,6 +178,7 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
       });
       const body = await response.json() as DiscoveryResponse;
       if (!response.ok) throw new Error(body.error || "Не удалось выполнить поиск");
+      if (!Array.isArray(body.products) || body.products.length === 0) throw new Error("Магазины не вернули подтверждённые карточки");
       setResults(body.products); setSummary(body.summary);
     } catch (searchError) {
       setError(searchError instanceof Error ? searchError.message : "Не удалось выполнить поиск");
@@ -234,8 +235,8 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
           <div className="discovery-hero">
             <div className="ai-orb">✦</div>
             <p className="eyebrow">КОНТЕКСТНЫЙ AI-ПОИСК</p>
-            <h1>Поймём товар и найдём профильные площадки.</h1>
-            <p className="discovery-lead">Для CS2 проверим LIS-SKINS и игровые маркеты, для техники — профильные магазины, для других категорий — свои доверенные источники.</p>
+            <h1>Изучим рынок и покажем реальные варианты.</h1>
+            <p className="discovery-lead">Проверим живые карточки, цены, рейтинг и отзывы. Для CS2 используем актуальный каталог LIS-SKINS и точные страницы предметов.</p>
             <form className="discovery-search" onSubmit={(event) => { event.preventDefault(); void searchProducts(); }}>
               <input type="search" inputMode="search" enterKeyHint="search" autoComplete="off" value={query} onChange={(event) => { setQuery(event.target.value); setError(""); }} placeholder="Например: новый розовый Glock из коллекции CS2" aria-label="Запрос для AI-поиска" />
               <button type="submit" disabled={loading}>{loading ? "Ищем…" : "Найти"} <span>→</span></button>
@@ -246,7 +247,7 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
           </div>
 
           <div className="discovery-results-head">
-            <div><h2>{results.length ? "AI-подборка" : "Начните с запроса"}</h2><p>{summary || "Контекст запроса определит подходящие магазины и прямые ссылки на товары."}</p></div>
+            <div><h2>{results.length ? "Проверенная подборка" : "Начните с запроса"}</h2><p>{summary || "Покажем только найденные карточки товаров с прямыми ссылками — без подстановки запроса в страницы поиска."}</p></div>
             {results.length > 0 && <span>{results.length} вариантов</span>}
           </div>
           {loading ? (
@@ -258,7 +259,7 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
                   <div className={`discovery-art art-${index % 3}`}><span>{item.name.split(/\s+/).slice(0, 2).map((word) => word[0]).join("").toUpperCase()}</span><i>✦ AI</i></div>
                   <div className="discovery-card-body">
                     <span className="popularity-badge">{item.popularity}</span><h3>{item.name}</h3><p>{item.description}</p>
-                    <div className="discovery-meta"><b>{item.priceLabel}</b><span>★ {item.ratingLabel}</span></div>
+                    <div className="discovery-meta"><b>{item.priceLabel}</b><span>{item.ratingLabel}</span></div>
                     <div className="discovery-open"><span>{item.sourceCount} источников</span><b>Сравнить →</b></div>
                   </div>
                 </button>
@@ -325,8 +326,8 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
           <section className="modal discovery-modal" role="dialog" aria-modal="true" aria-labelledby="discovery-title">
             <div className="modal-handle" /><button className="modal-close" onClick={() => setSelected(null)} aria-label="Закрыть">×</button>
             <div className="modal-kicker"><span>✦</span> ПРОФИЛЬНЫЕ ИСТОЧНИКИ</div><h2 id="discovery-title">{selected.name}</h2><p className="modal-lead">{selected.description}</p>
-            <div className="source-list">{selected.sources.map((source, index) => <a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer"><span>{index + 1}</span><div><small>{source.kind}</small><b>{source.title}</b></div><i>↗</i></a>)}</div>
-            <p className="source-note">Цены и наличие меняются. Проверяйте итоговую стоимость и условия на странице магазина.</p>
+            <div className="source-list">{selected.sources.map((source, index) => <a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer"><span>{index + 1}</span><div><small>{source.kind} · прямая страница</small><b>{source.title}</b>{(source.priceLabel || source.ratingLabel) && <em>{[source.priceLabel, source.ratingLabel].filter(Boolean).join(" · ")}</em>}</div><i>↗</i></a>)}</div>
+            <p className="source-note">Здесь только найденные прямые страницы товаров и обзоров, а не ссылки на поиск. Цена и наличие могут измениться — проверьте итог на сайте магазина.</p>
           </section>
         </div>
       )}

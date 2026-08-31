@@ -112,6 +112,14 @@ type ProfileApiResponse = {
 
 type ProfileSyncStatus = "local" | "loading" | "saving" | "synced" | "error";
 
+type LegacyLocalState = {
+  products: Product[] | null;
+  collections: Collection[] | null;
+  palette: Palette | null;
+  currency: CurrencyCode | null;
+  hasData: boolean;
+};
+
 type TelegramWindow = Window & {
   Telegram?: {
     WebApp?: {
@@ -481,6 +489,8 @@ export default function Home() {
   const skipNextRemoteSave = useRef(false);
   const pendingProductDeletions = useRef<Set<number>>(new Set());
   const remoteFetchInFlight = useRef(false);
+  const legacyLocalState = useRef<LegacyLocalState | null>(null);
+  const pendingMigrationKey = useRef<string | null>(null);
 
   useEffect(() => {
     const telegram = (window as TelegramWindow).Telegram?.WebApp;
@@ -490,35 +500,36 @@ export default function Home() {
     const initData = telegram?.initData?.trim() ?? "";
     telegramInitData.current = initData;
 
+    const readStoredJson = <T,>(key: string): T | null => {
+      const saved = window.localStorage.getItem(key);
+      if (!saved) return null;
+      try {
+        return JSON.parse(saved) as T;
+      } catch {
+        window.localStorage.removeItem(key);
+        return null;
+      }
+    };
+    const savedProducts = readStoredJson<Product[]>("pricepulse-products");
+    const savedCollections = readStoredJson<Collection[]>("pricepulse-collections");
+    const savedPalette = readStoredJson<Palette>("pricepulse-palette");
+    const savedCurrencyValue = window.localStorage.getItem("pricepulse-currency");
+    const savedCurrency = savedCurrencyValue === "RUB" || savedCurrencyValue === "USD" || savedCurrencyValue === "EUR"
+      ? savedCurrencyValue
+      : null;
+    legacyLocalState.current = {
+      products: Array.isArray(savedProducts) ? savedProducts.map(normalizeProduct) : null,
+      collections: Array.isArray(savedCollections) ? savedCollections : null,
+      palette: savedPalette?.accent ? savedPalette : null,
+      currency: savedCurrency,
+      hasData: Boolean(savedProducts || savedCollections || savedPalette || savedCurrency),
+    };
+
     if (!initData) {
-      const saved = window.localStorage.getItem("pricepulse-products");
-    if (saved) {
-      try {
-        setProducts((JSON.parse(saved) as Product[]).map(normalizeProduct));
-      } catch {
-        window.localStorage.removeItem("pricepulse-products");
-      }
-    }
-    const savedCollections = window.localStorage.getItem("pricepulse-collections");
-    if (savedCollections) {
-      try {
-        setCollections(JSON.parse(savedCollections) as Collection[]);
-      } catch {
-        window.localStorage.removeItem("pricepulse-collections");
-      }
-    }
-    const savedPalette = window.localStorage.getItem("pricepulse-palette");
-    if (savedPalette) {
-      try {
-        setPalette(JSON.parse(savedPalette) as Palette);
-      } catch {
-        window.localStorage.removeItem("pricepulse-palette");
-      }
-    }
-    const savedCurrency = window.localStorage.getItem("pricepulse-currency");
-    if (savedCurrency === "RUB" || savedCurrency === "USD" || savedCurrency === "EUR") {
-      setCurrency(savedCurrency);
-    }
+      if (legacyLocalState.current.products) setProducts(legacyLocalState.current.products);
+      if (legacyLocalState.current.collections) setCollections(legacyLocalState.current.collections);
+      if (legacyLocalState.current.palette) setPalette(legacyLocalState.current.palette);
+      if (legacyLocalState.current.currency) setCurrency(legacyLocalState.current.currency);
     }
     const savedProfile = window.localStorage.getItem("pricepulse-telegram-profile");
     if (savedProfile) {
@@ -582,21 +593,33 @@ export default function Home() {
           window.localStorage.setItem("pricepulse-telegram-profile", JSON.stringify(mergedProfile));
           return mergedProfile;
         });
-        if (body.state) {
-          profileRevision.current = body.state.revision;
-          skipNextRemoteSave.current = true;
-          setProducts(body.state.products.map(normalizeProduct));
-          setCollections(body.state.collections);
-          if (body.state.palette?.accent) setPalette(body.state.palette);
-          if (body.state.currency === "RUB" || body.state.currency === "USD" || body.state.currency === "EUR") {
-            setCurrency(body.state.currency);
-          }
-        } else {
-          profileRevision.current = 0;
-        }
+        const migrationKey = "pricepulse-cloud-migrated:" + body.profile.id;
+        const legacy = window.localStorage.getItem(migrationKey) === "1" ? null : legacyLocalState.current;
+        const shouldMigrate = Boolean(legacy?.hasData);
+        const cloudProducts = body.state?.products.map(normalizeProduct) ?? [];
+        const cloudCollections = body.state?.collections ?? [];
+        const nextProducts = shouldMigrate && legacy?.products
+          ? mergeProfileRecords(legacy.products, cloudProducts)
+          : (body.state ? cloudProducts : initialProducts);
+        const nextCollections = shouldMigrate && legacy?.collections
+          ? mergeProfileRecords(legacy.collections, cloudCollections)
+          : (body.state ? cloudCollections : initialCollections);
+
+        profileRevision.current = body.state?.revision ?? 0;
+        skipNextRemoteSave.current = Boolean(body.state) && !shouldMigrate;
+        pendingMigrationKey.current = shouldMigrate ? migrationKey : null;
+        if (!shouldMigrate) window.localStorage.setItem(migrationKey, "1");
+        setProducts(nextProducts);
+        setCollections(nextCollections);
+        const nextPalette = body.state?.palette?.accent ? body.state.palette : legacy?.palette;
+        const nextCurrency = body.state?.currency ?? legacy?.currency;
+        if (nextPalette?.accent) setPalette(nextPalette);
+        if (nextCurrency === "RUB" || nextCurrency === "USD" || nextCurrency === "EUR") setCurrency(nextCurrency);
         setRemoteReady(true);
-        setSyncStatus("synced");
-        setSyncMessage("Товары и подборки сохранены в облачном профиле");
+        setSyncStatus(shouldMigrate ? "saving" : "synced");
+        setSyncMessage(shouldMigrate
+          ? "Переносим карточки этого устройства в Telegram-профиль…"
+          : "Товары и подборки сохранены в облачном профиле");
       } catch (error) {
         setSyncStatus("error");
         setSyncMessage(error instanceof Error ? error.message : "Не удалось подключить облачную память");
@@ -698,6 +721,10 @@ export default function Home() {
             profileRevision.current = body.revision;
           }
           deletedProductIds.forEach((id) => pendingProductDeletions.current.delete(id));
+          if (pendingMigrationKey.current) {
+            window.localStorage.setItem(pendingMigrationKey.current, "1");
+            pendingMigrationKey.current = null;
+          }
           setSyncStatus("synced");
           setSyncMessage("Все карточки сохранены в Telegram-профиле");
         } catch (error) {

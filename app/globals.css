@@ -119,8 +119,8 @@ h1 { max-width: 690px; margin: 0; font-size: clamp(31px, 5vw, 56px); line-height
 .bottom-nav .nav-add > span { display: grid; place-items: center; width: 42px; height: 42px; margin-top: -22px; border-radius: 14px; background: var(--lime); color: var(--surface); font-size: 28px; box-shadow: 0 8px 22px color-mix(in srgb, var(--lime) 23%, transparent); }
 .bottom-nav .nav-add small { margin-top: 0; }
 
-.modal-backdrop { position: fixed; z-index: 50; inset: 0; padding: 22px; background: rgba(16,18,15,.58); display: flex; justify-content: center; align-items: center; backdrop-filter: blur(8px); animation: fadeIn .18s ease; }
-.modal { position: relative; width: min(570px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; padding: 33px 34px 30px; border-radius: 26px; background: var(--paper); box-shadow: 0 30px 90px rgba(0,0,0,.25); animation: modalIn .23s ease; scrollbar-width: none; }
+.modal-backdrop { position: fixed; z-index: 50; inset: 0; padding: 22px; overscroll-behavior: contain; background: rgba(16,18,15,.58); display: flex; justify-content: center; align-items: center; backdrop-filter: blur(8px); animation: fadeIn .18s ease; }
+.modal { position: relative; width: min(570px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; padding: 33px 34px 30px; border-radius: 26px; background: var(--paper); box-shadow: 0 30px 90px rgba(0,0,0,.25); animation: modalIn .23s ease; scrollbar-width: none; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
 .modal::-webkit-scrollbar { display: none; }
 .modal-handle { display: none; }
 .modal-close { position: absolute; right: 20px; top: 18px; border: 0; width: 32px; height: 32px; border-radius: 50%; background: #ebeae4; color: #696c64; font-size: 22px; cursor: pointer; }
@@ -132,8 +132,8 @@ h1 { max-width: 690px; margin: 0; font-size: clamp(31px, 5vw, 56px); line-height
 .url-field, .price-input { height: 50px; padding: 0 14px; display: flex; align-items: center; gap: 10px; border: 1px solid #dcdad2; border-radius: 12px; background: var(--card); }
 .url-field:focus-within, .price-input:focus-within { border-color: var(--lime); box-shadow: 0 0 0 3px color-mix(in srgb, var(--lime) 25%, transparent); }
 .url-field > span { color: #888c81; }
-.url-field input, .price-input input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; font-size: 12px; }
-.price-input span { color: #8b8e85; }
+.url-field input, .price-input input { position: relative; z-index: 1; min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 16px; pointer-events: auto; touch-action: manipulation; }
+.price-input span { color: #8b8e85; pointer-events: none; }
 .field-hint { margin: 7px 2px 20px; color: #a0a299; font-size: 9px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 select, .standalone-input { width: 100%; height: 50px; padding: 0 13px; border: 1px solid #dcdad2; border-radius: 12px; background: var(--card); font-size: 12px; outline: none; }
@@ -143,7 +143,7 @@ select, .standalone-input { width: 100%; height: 50px; padding: 0 13px; border: 
 .frequency-grid button { border: 1px solid #dcdbd4; border-radius: 10px; background: var(--card); height: 39px; font-size: 10px; font-weight: 800; cursor: pointer; }
 .frequency-grid button.picked { background: var(--surface); border-color: var(--surface); color: var(--lime); }
 .custom-period { display: grid; grid-template-columns: 1fr 60px 48px; align-items: center; gap: 7px; margin-top: 9px; padding: 8px 10px 8px 14px; border: 1px solid #dcdbd4; border-radius: 10px; background: var(--card); color: #898c83; font-size: 10px; }
-.custom-period input { width: 60px; height: 31px; border: 1px solid #e4e2db; border-radius: 7px; text-align: center; outline: 0; }
+.custom-period input { position: relative; z-index: 1; width: 60px; height: 31px; border: 1px solid #e4e2db; border-radius: 7px; background: var(--card); color: var(--ink); text-align: center; outline: 0; font-size: 16px; pointer-events: auto; touch-action: manipulation; }
 .form-error { margin: 10px 0 0; color: #bd4937; font-size: 10px; }
 .smart-note { display: flex; gap: 11px; align-items: flex-start; margin: 18px 0; padding: 13px 14px; border-radius: 11px; background: #f0f1e8; }
 .smart-note > span { color: #829135; font-size: 16px; }
@@ -225,6 +225,8 @@ select, .standalone-input { width: 100%; height: 50px; padding: 0 13px; border: 
 .features-heading > span { padding: 6px 8px; border-radius: 8px; background: color-mix(in srgb, var(--lime) 42%, white); color: #536020; font-size: 7px; font-weight: 950; letter-spacing: .8px; }
 .feature-action { width: 100%; border-right: 0; border-bottom: 0; border-left: 0; background: color-mix(in srgb, var(--lime) 10%, white); text-align: left; cursor: pointer; }
 .feature-action:hover { background: color-mix(in srgb, var(--lime) 20%, white); }
+.feature-action:disabled { opacity: .72; cursor: wait; }
+.refresh-spin { animation: refreshSpin .8s linear infinite; }
 .feature-action > i { margin-left: auto; display: grid; place-items: center; width: 25px; height: 25px; border-radius: 8px; background: var(--surface); color: var(--lime); font-size: 12px; font-style: normal; font-weight: 900; }
 
 .palette-button { font-size: 18px; color: var(--accent-2); }
@@ -446,6 +448,7 @@ select, .standalone-input { width: 100%; height: 50px; padding: 0 13px; border: 
 .source-note { margin: 13px 0 0; color: var(--muted); font-size: 8px; line-height: 1.5; }
 
 @keyframes aiPulse { to { transform: scale(1.18) rotate(12deg); } }
+@keyframes refreshSpin { to { transform: rotate(360deg); } }
 @keyframes fadeIn { from { opacity: 0; } }
 @keyframes modalIn { from { opacity: 0; transform: translateY(16px) scale(.98); } }
 @keyframes toastIn { from { opacity: 0; transform: translate(-50%, -12px); } }
@@ -507,6 +510,7 @@ select, .standalone-input { width: 100%; height: 50px; padding: 0 13px; border: 
   .modal-handle { display: block; width: 40px; height: 4px; border-radius: 5px; background: #d3d1c9; margin: -16px auto 20px; }
   .modal-close { top: 20px; right: 17px; }
   .modal h2 { font-size: 28px; }
+  .modal input, .modal select, .modal textarea { font-size: 16px; touch-action: manipulation; }
   .form-grid { grid-template-columns: 1fr; gap: 15px; }
   .details-head { grid-template-columns: 58px 1fr 34px; margin-right: 0; }
   .detail-art { width: 58px; height: 58px; }

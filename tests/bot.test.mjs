@@ -6,6 +6,7 @@ import {
   handleUpdate,
   normalizeWebAppUrl,
   parseCommand,
+  runPriceMonitor,
 } from "../bot/telegram.mjs";
 
 test("parses Telegram commands with an optional bot username", () => {
@@ -40,4 +41,20 @@ test("answers /start with the Mini App button", async () => {
   assert.equal(calls[0][0], "sendMessage");
   assert.equal(calls[0][1].chat_id, 42);
   assert.equal(calls[0][1].reply_markup.inline_keyboard[0][0].web_app.url, "https://example.com");
+});
+
+test("triggers the protected price monitor with the bot token", async () => {
+  const calls = [];
+  const result = await runPriceMonitor({
+    token: "123:secret",
+    webAppUrl: "https://example.com/",
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return Response.json({ ok: true, checked: 2, notified: 1 });
+    },
+  });
+  assert.equal(result.notified, 1);
+  assert.equal(calls[0].url, "https://example.com/api/notifications/run");
+  assert.equal(calls[0].options.method, "POST");
+  assert.equal(calls[0].options.headers.authorization, "Bearer 123:secret");
 });

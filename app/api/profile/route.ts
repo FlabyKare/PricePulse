@@ -2,6 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { getDb } from "@/db";
 import { profileStates, telegramUsers } from "@/db/schema";
 import { authenticateTelegramRequest } from "@/lib/telegram-auth";
+import { mergeProfileRecords } from "@/lib/profile-state";
 
 type ProfileStatePayload = {
   products?: unknown;
@@ -77,6 +78,26 @@ function productIds(products: unknown) {
   }));
 }
 
+function mergedConflictingState(
+  stored: typeof profileStates.$inferSelect,
+  incoming: ReturnType<typeof validatedState>,
+  payload: ProfileStatePayload,
+) {
+  const productsJson = JSON.stringify(mergeProfileRecords(
+    parseJson<unknown[]>(stored.productsJson, []),
+    payload.products as unknown[],
+    incoming.deletedProductIds,
+  ));
+  const collectionsJson = JSON.stringify(mergeProfileRecords(
+    parseJson<unknown[]>(stored.collectionsJson, []),
+    payload.collections as unknown[],
+  ));
+  if (productsJson.length + collectionsJson.length + incoming.paletteJson.length > MAX_STATE_BYTES) {
+    throw new Error("Профиль превысил допустимый размер");
+  }
+  return { ...incoming, productsJson, collectionsJson, revision: stored.revision };
+}
+
 async function upsertTelegramUser(user: NonNullable<Awaited<ReturnType<typeof authenticateTelegramRequest>>["user"]>) {
   const db = getDb();
   await db.insert(telegramUsers).values({
@@ -137,7 +158,7 @@ export async function PUT(request: Request) {
 
   try {
     const payload = await request.json() as ProfileStatePayload;
-    const state = validatedState(payload);
+    let state = validatedState(payload);
     await upsertTelegramUser(auth.user);
     const db = getDb();
     const [stored] = await db.select().from(profileStates).where(eq(profileStates.userId, auth.user.id)).limit(1);
@@ -156,20 +177,24 @@ export async function PUT(request: Request) {
           revision: profileStates.revision,
           updatedAt: profileStates.updatedAt,
         });
-        return Response.json({ saved: true, ...created }, { headers: { "cache-control": "no-store" } });
+        const [current] = await db.select().from(profileStates).where(eq(profileStates.userId, auth.user.id)).limit(1);
+        return Response.json({ saved: true, merged: false, ...created, state: current ? responseState(current) : null }, { headers: { "cache-control": "no-store" } });
       } catch {
         return conflictResponse(auth.user.id);
       }
     }
 
-    if (stored.revision !== state.revision) return conflictResponse(auth.user.id);
-
-    const storedProductIds = productIds(parseJson(stored.productsJson, []));
-    const nextProductIds = productIds(payload.products);
-    const allowedDeletions = new Set(state.deletedProductIds);
-    const unexpectedlyMissing = [...storedProductIds].filter((id) => !nextProductIds.has(id) && !allowedDeletions.has(id));
-    if (unexpectedlyMissing.length) {
-      return conflictResponse(auth.user.id, "Сервер защитил сохранённые карточки от случайного сброса. Загружена последняя облачная версия.");
+    const merged = stored.revision !== state.revision;
+    if (merged) {
+      state = mergedConflictingState(stored, state, payload);
+    } else {
+      const storedProductIds = productIds(parseJson(stored.productsJson, []));
+      const nextProductIds = productIds(payload.products);
+      const allowedDeletions = new Set(state.deletedProductIds);
+      const unexpectedlyMissing = [...storedProductIds].filter((id) => !nextProductIds.has(id) && !allowedDeletions.has(id));
+      if (unexpectedlyMissing.length) {
+        return conflictResponse(auth.user.id, "Сервер защитил сохранённые карточки от случайного сброса. Загружена последняя облачная версия.");
+      }
     }
 
     const [saved] = await db.update(profileStates).set({
@@ -188,7 +213,8 @@ export async function PUT(request: Request) {
     });
 
     if (!saved) return conflictResponse(auth.user.id);
-    return Response.json({ saved: true, ...saved }, { headers: { "cache-control": "no-store" } });
+    const [current] = await db.select().from(profileStates).where(eq(profileStates.userId, auth.user.id)).limit(1);
+    return Response.json({ saved: true, merged, ...saved, state: current ? responseState(current) : null }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Не удалось сохранить профиль";
     return Response.json({ error: message }, { status: /поврежд|размер|валют|Версия/.test(message) ? 400 : 500 });

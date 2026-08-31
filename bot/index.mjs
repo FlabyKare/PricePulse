@@ -3,11 +3,13 @@ import {
   TelegramClient,
   handleUpdate,
   normalizeWebAppUrl,
+  runPriceMonitor,
 } from "./telegram.mjs";
 
 const token = process.env.BOT_TOKEN?.trim();
 const webAppUrl = normalizeWebAppUrl(process.env.WEBAPP_URL?.trim() || DEFAULT_WEBAPP_URL);
 const pollingTimeout = Math.min(Math.max(Number(process.env.BOT_POLLING_TIMEOUT) || 30, 5), 50);
+const monitorInterval = Math.max(Number(process.env.PRICE_MONITOR_INTERVAL_MS) || 60_000, 60_000);
 
 if (!token) {
   console.error("[bot] BOT_TOKEN is missing. Add it to Railway Variables.");
@@ -46,8 +48,22 @@ async function run() {
 
   let offset = 0;
   let retryDelay = 1_000;
+  let nextMonitorAt = 0;
 
   while (!stopping) {
+    if (Date.now() >= nextMonitorAt) {
+      try {
+        const result = await runPriceMonitor({ token, webAppUrl });
+        if (result.checked || result.notified) {
+          console.log(`[bot] monitor checked ${result.checked}; notifications ${result.notified}`);
+        }
+      } catch (error) {
+        console.error(`[bot] price monitor failed: ${error.message}`);
+      } finally {
+        nextMonitorAt = Date.now() + monitorInterval;
+      }
+    }
+
     activeRequest = new AbortController();
 
     try {

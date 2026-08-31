@@ -3,6 +3,7 @@
 import type { CSSProperties } from "react";
 import { createContext, FormEvent, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { isLisSkinsUrl } from "@/lib/lis-skins";
+import { mergeProfileRecords } from "@/lib/profile-state";
 import { InvestmentsView, SmartDiscoveryView } from "./ai-views";
 
 type Offer = {
@@ -105,6 +106,7 @@ type ProfileApiResponse = {
   saved?: boolean;
   revision?: number;
   conflict?: boolean;
+  merged?: boolean;
   error?: string;
 };
 
@@ -126,6 +128,7 @@ type TelegramWindow = Window & {
       };
       ready?: () => void;
       expand?: () => void;
+      disableVerticalSwipes?: () => void;
       HapticFeedback?: { impactOccurred: (value: string) => void };
     };
   };
@@ -405,6 +408,34 @@ function withResolvedLisPrice(product: Product, resolved: ResolvedLisProduct): P
   };
 }
 
+function withResolvedStorePrice(product: Product, resolved: ResolvedStoreProduct): Product {
+  if (!resolved.priceRub || resolved.priceRub <= 0) return product;
+  const previousPrice = product.price > 0 ? product.price : resolved.priceRub;
+  const change = previousPrice > 0
+    ? Math.round(((resolved.priceRub - previousPrice) / previousPrice) * 1000) / 10
+    : 0;
+  const refreshedOffer: Offer = {
+    id: product.offers?.find((offer) => offer.store === resolved.source)?.id ?? `${product.id}-${resolved.source}`,
+    store: resolved.source,
+    price: resolved.priceRub,
+    url: resolved.url,
+    note: "Цена проверена по странице магазина",
+  };
+  return {
+    ...product,
+    name: resolved.name || product.name,
+    source: resolved.source || product.source,
+    url: resolved.url,
+    oldPrice: previousPrice,
+    price: resolved.priceRub,
+    change,
+    nextCheck: "проверено только что",
+    imageUrl: resolved.imageUrl ?? product.imageUrl,
+    priceHistory: appendPriceObservation(product.priceHistory, resolved.priceRub),
+    offers: [refreshedOffer, ...(product.offers ?? []).filter((offer) => offer.store !== resolved.source)],
+  };
+}
+
 function offerUrlForProduct(offer: Offer, productName: string) {
   const store = `${offer.store} ${offer.url}`.toLocaleLowerCase("en");
   if (store.includes("steamcommunity") || store.includes("steam")) {
@@ -437,6 +468,7 @@ export default function Home() {
   const [selectedCollection, setSelectedCollection] = useState<Collection | null>(null);
   const [selected, setSelected] = useState<Product | null>(null);
   const [toast, setToast] = useState("");
+  const [refreshingPrices, setRefreshingPrices] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [catalogReady, setCatalogReady] = useState(false);
   const [remoteReady, setRemoteReady] = useState(false);
@@ -448,9 +480,18 @@ export default function Home() {
   const profileRevision = useRef<number | null>(null);
   const skipNextRemoteSave = useRef(false);
   const pendingProductDeletions = useRef<Set<number>>(new Set());
+  const remoteFetchInFlight = useRef(false);
 
   useEffect(() => {
-    const saved = window.localStorage.getItem("pricepulse-products");
+    const telegram = (window as TelegramWindow).Telegram?.WebApp;
+    telegram?.ready?.();
+    telegram?.expand?.();
+    telegram?.disableVerticalSwipes?.();
+    const initData = telegram?.initData?.trim() ?? "";
+    telegramInitData.current = initData;
+
+    if (!initData) {
+      const saved = window.localStorage.getItem("pricepulse-products");
     if (saved) {
       try {
         setProducts((JSON.parse(saved) as Product[]).map(normalizeProduct));
@@ -478,6 +519,7 @@ export default function Home() {
     if (savedCurrency === "RUB" || savedCurrency === "USD" || savedCurrency === "EUR") {
       setCurrency(savedCurrency);
     }
+    }
     const savedProfile = window.localStorage.getItem("pricepulse-telegram-profile");
     if (savedProfile) {
       try {
@@ -500,9 +542,6 @@ export default function Home() {
       }
     }
 
-    const telegram = (window as TelegramWindow).Telegram?.WebApp;
-    telegram?.ready?.();
-    telegram?.expand?.();
     const unsafeUser = telegram?.initDataUnsafe?.user;
     if (unsafeUser?.id && unsafeUser.first_name) {
       const telegramProfile: TelegramProfile = {
@@ -517,8 +556,6 @@ export default function Home() {
       window.localStorage.setItem("pricepulse-telegram-profile", JSON.stringify(telegramProfile));
     }
 
-    const initData = telegram?.initData?.trim() ?? "";
-    telegramInitData.current = initData;
     setLoaded(true);
 
     if (!initData) {
@@ -570,7 +607,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (loaded) window.localStorage.setItem("pricepulse-products", JSON.stringify(products));
+    if (loaded && !telegramInitData.current) window.localStorage.setItem("pricepulse-products", JSON.stringify(products));
   }, [products, loaded]);
 
   useEffect(() => {
@@ -609,7 +646,7 @@ export default function Home() {
   }, [catalogReady, products]);
 
   useEffect(() => {
-    if (!loaded) return;
+    if (!loaded || telegramInitData.current) return;
     window.localStorage.setItem("pricepulse-collections", JSON.stringify(collections));
     window.localStorage.setItem("pricepulse-palette", JSON.stringify(palette));
     window.localStorage.setItem("pricepulse-currency", currency);
@@ -639,18 +676,27 @@ export default function Home() {
           const body = await response.json() as ProfileApiResponse;
           if (response.status === 409 && body.state) {
             profileRevision.current = body.state.revision;
-            pendingProductDeletions.current.clear();
+            setProducts(mergeProfileRecords(
+              body.state.products.map(normalizeProduct),
+              products,
+              deletedProductIds,
+            ));
+            setCollections(mergeProfileRecords(body.state.collections, collections));
+            setSyncStatus("saving");
+            setSyncMessage("Объединяем изменения с другого устройства…");
+            return;
+          }
+          if (!response.ok) throw new Error(body.error || "Не удалось сохранить профиль");
+          if (body.merged && body.state) {
+            profileRevision.current = body.state.revision;
             skipNextRemoteSave.current = true;
             setProducts(body.state.products.map(normalizeProduct));
             setCollections(body.state.collections);
             if (body.state.palette?.accent) setPalette(body.state.palette);
             if (body.state.currency === "RUB" || body.state.currency === "USD" || body.state.currency === "EUR") setCurrency(body.state.currency);
-            setSyncStatus("synced");
-            setSyncMessage("Загружена более свежая версия Telegram-профиля");
-            return;
+          } else if (typeof body.revision === "number") {
+            profileRevision.current = body.revision;
           }
-          if (!response.ok) throw new Error(body.error || "Не удалось сохранить профиль");
-          if (typeof body.revision === "number") profileRevision.current = body.revision;
           deletedProductIds.forEach((id) => pendingProductDeletions.current.delete(id));
           setSyncStatus("synced");
           setSyncMessage("Все карточки сохранены в Telegram-профиле");
@@ -663,6 +709,49 @@ export default function Home() {
     return () => window.clearTimeout(timeout);
   }, [products, collections, palette, currency, loaded, remoteReady]);
 
+
+  useEffect(() => {
+    if (!remoteReady || syncStatus !== "synced" || !telegramInitData.current) return;
+    let disposed = false;
+
+    async function pullRemoteState() {
+      if (disposed || document.hidden || remoteFetchInFlight.current) return;
+      remoteFetchInFlight.current = true;
+      try {
+        const response = await fetch("/api/profile", {
+          headers: { "x-telegram-init-data": telegramInitData.current },
+          cache: "no-store",
+        });
+        const body = await response.json() as ProfileApiResponse;
+        if (!response.ok || !body.state || body.state.revision <= (profileRevision.current ?? 0)) return;
+        profileRevision.current = body.state.revision;
+        pendingProductDeletions.current.clear();
+        skipNextRemoteSave.current = true;
+        setProducts(body.state.products.map(normalizeProduct));
+        setCollections(body.state.collections);
+        if (body.state.palette?.accent) setPalette(body.state.palette);
+        if (body.state.currency === "RUB" || body.state.currency === "USD" || body.state.currency === "EUR") setCurrency(body.state.currency);
+        if (body.profile) setProfile(body.profile);
+        setSyncMessage("Получены свежие данные Telegram-профиля");
+      } catch {
+        // A short network interruption must not replace the last synchronized state.
+      } finally {
+        remoteFetchInFlight.current = false;
+      }
+    }
+
+    const handleFocus = () => { void pullRemoteState(); };
+    const handleVisibility = () => { if (!document.hidden) void pullRemoteState(); };
+    const interval = window.setInterval(() => { void pullRemoteState(); }, 15_000);
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      disposed = true;
+      window.clearInterval(interval);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [remoteReady, syncStatus]);
   useEffect(() => {
     if (!toast) return;
     const timeout = window.setTimeout(() => setToast(""), 2600);
@@ -766,30 +855,42 @@ export default function Home() {
   }
 
   async function refreshAllPrices() {
-    const lisProducts = products.filter((product) => isLisSkinsUrl(product.url));
-    if (!lisProducts.length) {
-      setToast("Нет товаров LIS-SKINS для автоматического обновления");
+    if (refreshingPrices) return;
+    const supportedProducts = products.filter((product) => /^https?:\/\//i.test(product.url));
+    if (!supportedProducts.length) {
+      setToast("Нет товаров для автоматического обновления");
       return;
     }
-    setToast(`Обновляем ${lisProducts.length} цен…`);
-    const results = await Promise.allSettled(lisProducts.map(async (product) => ({
-      id: product.id,
-      resolved: await resolveLisProduct(product.url),
-    })));
-    const updates = new Map<number, ResolvedLisProduct>();
-    results.forEach((result) => {
-      if (result.status === "fulfilled") updates.set(result.value.id, result.value.resolved);
-    });
-    if (updates.size) {
-      setProducts((current) => current.map((product) => {
-        const resolved = updates.get(product.id);
-        return resolved ? withResolvedLisPrice(product, resolved) : product;
+    setRefreshingPrices(true);
+    setToast(`Обновляем ${supportedProducts.length} цен…`);
+    try {
+      const results = await Promise.allSettled(supportedProducts.map(async (product) => {
+        if (isLisSkinsUrl(product.url)) {
+          return { id: product.id, lis: await resolveLisProduct(product.url) };
+        }
+        const store = await resolveStoreProduct(product.url, product.name);
+        if (!store.priceRub || store.priceRub <= 0) throw new Error("Цена не распознана");
+        return { id: product.id, store };
       }));
+      const updates = new Map<number, { lis?: ResolvedLisProduct; store?: ResolvedStoreProduct }>();
+      results.forEach((result) => {
+        if (result.status === "fulfilled") updates.set(result.value.id, result.value);
+      });
+      if (updates.size) {
+        setProducts((current) => current.map((product) => {
+          const resolved = updates.get(product.id);
+          if (resolved?.lis) return withResolvedLisPrice(product, resolved.lis);
+          if (resolved?.store) return withResolvedStorePrice(product, resolved.store);
+          return product;
+        }));
+      }
+      setToast(updates.size
+        ? `Обновлено цен: ${updates.size} из ${supportedProducts.length}`
+        : "Не удалось обновить цены — попробуйте позже");
+      haptic("medium");
+    } finally {
+      setRefreshingPrices(false);
     }
-    setToast(updates.size
-      ? `Обновлено цен: ${updates.size} из ${lisProducts.length}`
-      : "Не удалось обновить цены — попробуйте позже");
-    haptic("medium");
   }
 
   async function addOffer(productId: number, url: string) {
@@ -860,7 +961,7 @@ export default function Home() {
           <button className="icon-button palette-button" aria-label="Выбрать цветовую палитру" onClick={() => setThemeOpen(true)}>
             ◐
           </button>
-          <button className="icon-button notification" aria-label="Уведомления" onClick={() => setToast("Новых уведомлений пока нет")}>
+          <button className="icon-button notification" aria-label="Уведомления" onClick={() => setToast("Изменения цены приходят сообщением от бота")}>
             ♢<span />
           </button>
           <button className="avatar" aria-label={profile ? `Профиль ${displayName}` : "Профиль"} onClick={() => changeNav("Профиль")}>{avatarLetter}</button>
@@ -880,7 +981,7 @@ export default function Home() {
       ) : activeNav === "Инвестиции" ? (
         <InvestmentsView />
       ) : activeNav === "Профиль" ? (
-        <ProfileView products={products} palette={palette} profile={profile} syncStatus={syncStatus} currency={currency} ratesReady={rates.USD > 0 && rates.EUR > 0} onCurrency={setCurrency} onRefreshAll={refreshAllPrices} onTheme={() => setThemeOpen(true)} />
+        <ProfileView products={products} palette={palette} profile={profile} syncStatus={syncStatus} syncMessage={syncMessage} refreshingPrices={refreshingPrices} currency={currency} ratesReady={rates.USD > 0 && rates.EUR > 0} onCurrency={setCurrency} onRefreshAll={refreshAllPrices} onTheme={() => setThemeOpen(true)} />
       ) : activeNav === "Подборки" ? (
         <CollectionsView collections={collections} products={products} onShare={shareCollection} onOpen={setSelectedCollection} onCreate={() => setCollectionOpen(true)} />
       ) : (
@@ -1138,7 +1239,7 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
         <p className="modal-lead">Вставьте ссылку — распознаем товар и начнём следить за ценой.</p>
         <form onSubmit={submit}>
           <label className="field-label" htmlFor="product-url">Ссылка на товар</label>
-          <div className="url-field"><span>↗</span><input id="product-url" type="url" value={url} onChange={(event) => { setUrl(event.target.value); setError(""); }} placeholder="https://lis-skins.com/market/..." /></div>
+          <label className="url-field" htmlFor="product-url"><span>↗</span><input id="product-url" type="url" autoFocus value={url} onChange={(event) => { setUrl(event.target.value); setError(""); }} placeholder="https://lis-skins.com/market/..." /></label>
           <p className="field-hint">LIS-SKINS распознаётся автоматически по официальному каталогу</p>
 
           {!lisUrlEntered && url && (
@@ -1146,7 +1247,7 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
               <label className="field-label" htmlFor="manual-name">Название товара <span className="optional-label">если не распознается</span></label>
               <input id="manual-name" className="standalone-input product-name-fallback" value={manualName} onChange={(event) => setManualName(event.target.value)} placeholder="Например, Apple AirPods Pro 2" />
               <label className="field-label manual-price-label" htmlFor="manual-price">Текущая цена <span className="optional-label">если не определится</span></label>
-              <div className="price-input"><input id="manual-price" inputMode="decimal" value={manualPrice} onChange={(event) => setManualPrice(event.target.value.replace(/[^\d,.\s]/g, ""))} placeholder="Например, 4 500" /><span>₽</span></div>
+              <label className="price-input" htmlFor="manual-price"><input id="manual-price" inputMode="decimal" value={manualPrice} onChange={(event) => setManualPrice(event.target.value.replace(/[^\d,.\s]/g, ""))} placeholder="Например, 4 500" /><span>₽</span></label>
               <p className="field-hint">Ozon и другие поддерживаемые магазины проверяются по содержимому страницы, а не по названию в URL.</p>
             </div>
           )}
@@ -1161,7 +1262,7 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
             </div>
             <div>
               <label className="field-label" htmlFor="target-price">Цена для уведомления</label>
-              <div className="price-input"><input id="target-price" min="1" inputMode="numeric" value={target} onChange={(event) => setTarget(event.target.value.replace(/\D/g, ""))} placeholder="Например, 4 500" /><span>₽</span></div>
+              <label className="price-input" htmlFor="target-price"><input id="target-price" min="1" inputMode="numeric" value={target} onChange={(event) => setTarget(event.target.value.replace(/\D/g, ""))} placeholder="Например, 4 500" /><span>₽</span></label>
             </div>
           </div>
           {category === "Другое" && <input className="standalone-input" value={customCategory} onChange={(event) => setCustomCategory(event.target.value)} placeholder="Название новой категории" aria-label="Новая категория" />}
@@ -1174,11 +1275,11 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
               </button>
             ))}
           </div>
-          <div className="custom-period">
+          <label className="custom-period" htmlFor="custom-period-hours">
             <span>Свой период</span>
-            <input min="1" type="number" value={customPeriod} onChange={(event) => setCustomPeriod(event.target.value)} placeholder="—" aria-label="Свой период в часах" />
+            <input id="custom-period-hours" min="1" type="number" value={customPeriod} onChange={(event) => setCustomPeriod(event.target.value)} placeholder="—" aria-label="Свой период в часах" />
             <span>часов</span>
-          </div>
+          </label>
           {error && <p className="form-error" role="alert">{error}</p>}
           <div className="smart-note"><span>✦</span><p><b>Умные уведомления</b><br />Сообщим в Telegram, когда цена достигнет цели или резко снизится.</p></div>
           <button className="primary-button" type="submit" disabled={loading}>{loading ? "Распознаём товар…" : "Начать мониторинг"} <span>→</span></button>
@@ -1424,6 +1525,8 @@ function ProfileView({
   palette,
   profile,
   syncStatus,
+  syncMessage,
+  refreshingPrices,
   currency,
   ratesReady,
   onCurrency,
@@ -1434,10 +1537,12 @@ function ProfileView({
   palette: Palette;
   profile: TelegramProfile | null;
   syncStatus: ProfileSyncStatus;
+  syncMessage: string;
+  refreshingPrices: boolean;
   currency: CurrencyCode;
   ratesReady: boolean;
   onCurrency: (currency: CurrencyCode) => void;
-  onRefreshAll: () => void;
+  onRefreshAll: () => Promise<void>;
   onTheme: () => void;
 }) {
   const name = profile ? [profile.firstName, profile.lastName].filter(Boolean).join(" ") : "Telegram-профиль";
@@ -1465,6 +1570,7 @@ function ProfileView({
         </div>
         {syncLabel && <span className={`profile-sync-badge ${syncStatus}`}>{syncLabel}</span>}
       </div>
+      {syncMessage && <p className={`profile-sync-note ${syncStatus}`}>{syncMessage}</p>}
       <div className="settings-card">
         <h2>Мониторинг</h2>
         <div className="setting-row"><span>Активных товаров</span><b>{products.length}</b></div>
@@ -1488,8 +1594,8 @@ function ProfileView({
       </div>
       <div className="settings-card">
         <div className="features-heading"><h2>Новые возможности</h2><span>ОБНОВЛЕНО</span></div>
-        <button className="idea-row feature-action" type="button" onClick={onRefreshAll}>
-          <span>↻</span><p><b>Обновить все цены</b><small>Проверить поддерживаемые товары прямо сейчас</small></p><i>→</i>
+        <button className="idea-row feature-action" type="button" onClick={() => void onRefreshAll()} disabled={refreshingPrices} aria-busy={refreshingPrices}>
+          <span className={refreshingPrices ? "refresh-spin" : ""}>↻</span><p><b>{refreshingPrices ? "Обновляем цены…" : "Обновить все цены"}</b><small>{refreshingPrices ? "Проверяем страницы магазинов" : "Проверить поддерживаемые товары прямо сейчас"}</small></p><i>{refreshingPrices ? "…" : "→"}</i>
         </button>
         <div className="idea-row enabled"><span>↯</span><p><b>Сравнение магазинов</b><small>Добавляйте предложения прямо в карточке</small></p><i>✓</i></div>
         <div className="idea-row enabled"><span>↘</span><p><b>Прогноз выгодной цены</b><small>Рекомендация на основе истории и тренда</small></p><i>✓</i></div>

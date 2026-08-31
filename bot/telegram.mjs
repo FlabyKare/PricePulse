@@ -66,6 +66,23 @@ export async function handleUpdate({ client, update, webAppUrl }) {
   return true;
 }
 
+export async function runPriceMonitor({ token, webAppUrl, fetchImpl = globalThis.fetch }) {
+  const response = await fetchImpl(`${normalizeWebAppUrl(webAppUrl)}/api/notifications/run`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+  });
+  let result;
+  try {
+    result = await response.json();
+  } catch {
+    throw new Error(`Price monitor returned invalid JSON (${response.status})`);
+  }
+  if (!response.ok || !result?.ok) {
+    throw new Error(result?.error || `Price monitor failed: ${response.status}`);
+  }
+  return result;
+}
+
 export class TelegramClient {
   constructor({ token, fetchImpl = globalThis.fetch, apiRoot = "https://api.telegram.org" }) {
     if (!token) throw new Error("BOT_TOKEN is required");

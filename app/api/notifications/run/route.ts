@@ -117,13 +117,18 @@ async function sendPriceNotification(
 ) {
   const title = notification.targetReached ? "🎯 <b>Целевая цена достигнута</b>" : "🔔 <b>Цена изменилась</b>";
   const direction = notification.percent > 0 ? "выросла" : "снизилась";
+  const statusLine = notification.targetReached
+    ? `Цена достигла заданного порога <b>${formatRub(Number(product.target))}</b>.`
+    : `Цена ${direction} на ${Math.abs(notification.percent).toLocaleString("ru-RU")}%.`;
+  const priceLines = notification.priceChanged
+    ? [`Было: <s>${formatRub(notification.previous)}</s>`, `Стало: <b>${formatRub(notification.next)}</b>`]
+    : [`Текущая цена: <b>${formatRub(notification.next)}</b>`];
   const text = [
     title,
     "",
     `<b>${escapeHtml(product.name)}</b>`,
-    `Цена ${direction} на ${Math.abs(notification.percent).toLocaleString("ru-RU")}%.`,
-    `Было: <s>${formatRub(notification.previous)}</s>`,
-    `Стало: <b>${formatRub(notification.next)}</b>`,
+    statusLine,
+    ...priceLines,
   ].join("\n");
   const response = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
     method: "POST",

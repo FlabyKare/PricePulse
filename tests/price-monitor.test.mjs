@@ -28,9 +28,40 @@ test("runs the first bot check after two minutes and later checks by user period
 test("creates a Telegram notification for a change and a reached target", () => {
   const notification = priceNotification(product, 4600);
   assert.equal(notification?.targetReached, true);
+  assert.equal(notification?.priceChanged, true);
   assert.equal(notification?.percent, -8);
   const updated = applyObservedPrice(product, 4600, "2026-08-31T10:02:00.000Z");
   assert.equal(updated.price, 4600);
   assert.equal(updated.oldPrice, 5000);
   assert.equal(updated.change, -8);
+});
+
+test("ignores price noise that would be displayed as zero percent", () => {
+  const expensiveProduct = {
+    ...product,
+    price: 174_817.6,
+    target: 4500,
+    priceHistory: [
+      { price: 174_817.6, capturedAt: "2026-08-31T10:00:00.000Z" },
+      { price: 174_817.6, capturedAt: "2026-08-31T13:00:00.000Z" },
+    ],
+  };
+  assert.equal(priceNotification(expensiveProduct, 174_818.2), null);
+  assert.equal(priceNotification(expensiveProduct, 174_900), null);
+});
+
+test("always notifies when the configured target is crossed", () => {
+  const nearTarget = {
+    ...product,
+    price: 4500.2,
+    target: 4500,
+    priceHistory: [
+      { price: 4510, capturedAt: "2026-08-31T10:00:00.000Z" },
+      { price: 4500.2, capturedAt: "2026-08-31T13:00:00.000Z" },
+    ],
+  };
+  const notification = priceNotification(nearTarget, 4499.9);
+  assert.equal(notification?.targetReached, true);
+  assert.equal(notification?.priceChanged, false);
+  assert.equal(notification?.percent, 0);
 });

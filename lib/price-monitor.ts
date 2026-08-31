@@ -16,6 +16,7 @@ export type MonitoredProduct = {
 };
 
 const FIRST_CHECK_DELAY_MS = 2 * 60 * 1000;
+const MIN_PRICE_CHANGE_PERCENT = 0.1;
 
 export function isPriceCheckDue(product: MonitoredProduct, now = Date.now()) {
   const history = Array.isArray(product.priceHistory) ? product.priceHistory : [];
@@ -54,16 +55,21 @@ export function applyObservedPrice(product: MonitoredProduct, price: number, cap
 export function priceNotification(product: MonitoredProduct, nextPrice: number) {
   const previous = Number(product.price);
   if (!Number.isFinite(previous) || previous <= 0 || !Number.isFinite(nextPrice) || nextPrice <= 0) return null;
-  const changed = Math.abs(nextPrice - previous) >= 0.01;
+  const rawPercent = ((nextPrice - previous) / previous) * 100;
+  const roundedPercent = Math.round(rawPercent * 10) / 10;
+  const percent = Object.is(roundedPercent, -0) ? 0 : roundedPercent;
+  const priceChanged = Math.round(nextPrice) !== Math.round(previous)
+    && Math.abs(rawPercent) >= MIN_PRICE_CHANGE_PERCENT;
   const firstObservation = (product.priceHistory?.length ?? 0) <= 1;
   const targetReached = Number(product.target) > 0
     && nextPrice <= Number(product.target)
     && (previous > Number(product.target) || firstObservation);
-  if (!changed && !targetReached) return null;
+  if (!priceChanged && !targetReached) return null;
   return {
     previous,
     next: nextPrice,
-    percent: Math.round(((nextPrice - previous) / previous) * 1000) / 10,
+    percent,
+    priceChanged,
     targetReached,
   };
 }

@@ -175,7 +175,15 @@ export async function POST(request: Request) {
       try {
         const nextPrice = await resolvePrice(product);
         const notification = priceNotification(product, nextPrice);
-        products[index] = applyObservedPrice(product, nextPrice, capturedAt);
+        const updated = applyObservedPrice(product, nextPrice, capturedAt);
+        const target = Number(product.target);
+        products[index] = {
+          ...updated,
+          targetAlerted: target > 0
+            ? (notification?.targetReached ? true : nextPrice > target ? false : Boolean(product.targetAlerted))
+            : false,
+          targetCheckPending: false,
+        };
         profileChanged = true;
         if (notification) notifications.push({ product, value: notification });
       } catch {

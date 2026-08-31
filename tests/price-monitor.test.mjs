@@ -18,6 +18,7 @@ const product = {
 };
 
 test("runs the first bot check after two minutes and later checks by user period", () => {
+  assert.equal(isPriceCheckDue({ ...product, targetCheckPending: true }, Date.parse("2026-08-31T10:00:01.000Z")), true);
   assert.equal(isPriceCheckDue(product, Date.parse("2026-08-31T10:01:59.000Z")), false);
   assert.equal(isPriceCheckDue(product, Date.parse("2026-08-31T10:02:00.000Z")), true);
   const checked = applyObservedPrice(product, 4900, "2026-08-31T10:02:00.000Z");
@@ -64,4 +65,8 @@ test("always notifies when the configured target is crossed", () => {
   assert.equal(notification?.targetReached, true);
   assert.equal(notification?.priceChanged, false);
   assert.equal(notification?.percent, 0);
+
+  const alreadyAlerted = { ...nearTarget, price: 4499.9, targetAlerted: true };
+  assert.equal(priceNotification(alreadyAlerted, 4499.8), null);
+  assert.equal(priceNotification({ ...alreadyAlerted, price: 4510 }, 4490)?.targetReached, true);
 });

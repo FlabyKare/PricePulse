@@ -59,6 +59,9 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /revision: profileRevision\.current/);
   assert.match(page, /response\.status === 409/);
   assert.match(page, /pendingProductDeletions/);
+  assert.match(page, /onTarget=/);
+  assert.match(page, /targetCheckPending/);
+  assert.match(page, /target-edit-form/);
   assert.match(page, /pricepulse-cloud-migrated:/);
   assert.match(page, /Переносим карточки этого устройства/);
   assert.match(page, /collection-card-open/);

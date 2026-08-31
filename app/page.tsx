@@ -36,6 +36,8 @@ type Product = {
   imageUrl?: string;
   priceHistory?: PricePoint[];
   target?: number;
+  targetAlerted?: boolean;
+  targetCheckPending?: boolean;
   offers?: Offer[];
 };
 
@@ -1109,6 +1111,25 @@ export default function Home() {
           onCheck={checkPrice}
           onAddOffer={addOffer}
           onDelete={deleteProduct}
+          onTarget={(id, target) => {
+            setProducts((current) => current.map((product) => product.id === id ? {
+              ...product,
+              target,
+              targetAlerted: false,
+              targetCheckPending: Boolean(target),
+              nextCheck: target ? "проверка цели в течение минуты" : `через ${product.period} ч`,
+            } : product));
+            setSelected((current) => current ? {
+              ...current,
+              target,
+              targetAlerted: false,
+              targetCheckPending: Boolean(target),
+              nextCheck: target ? "проверка цели в течение минуты" : `через ${current.period} ч`,
+            } : current);
+            setToast(target
+              ? `Цель обновлена: ${formatPrice(target)} · проверим в течение минуты`
+              : "Целевая цена отключена");
+          }}
           onPeriod={(id, period) => {
             setProducts((current) => current.map((product) => product.id === id ? { ...product, period, nextCheck: `через ${period} ч` } : product));
             setSelected((current) => current ? { ...current, period } : current);
@@ -1187,6 +1208,11 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
     }
     const isLis = isLisSkinsUrl(parsedUrl.href);
     const enteredPrice = Number(manualPrice.replace(/\s/g, "").replace(",", "."));
+    const enteredTarget = target ? Number(target) : null;
+    if (enteredTarget !== null && (!Number.isFinite(enteredTarget) || enteredTarget <= 0 || enteredTarget > 100_000_000)) {
+      setError("Цена для уведомления должна быть от 1 до 100 000 000 ₽");
+      return;
+    }
 
     setLoading(true);
     setError("");
@@ -1234,7 +1260,9 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
         favorite: false,
         imageUrl: resolved?.imageUrl ?? undefined,
         priceHistory: [{ price: currentPrice, capturedAt: new Date(now).toISOString() }],
-        target: target ? Number(target) : undefined,
+        target: enteredTarget ?? undefined,
+        targetAlerted: false,
+        targetCheckPending: false,
         offers: [{
           id: `${now}-${parsedUrl.hostname}`,
           store: source,
@@ -1315,13 +1343,35 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
     </div>
   );
 }
-function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAddOffer, onDelete }: { product: Product; onClose: () => void; onFavorite: (id: number) => void; onCheck: (id: number) => void; onPeriod: (id: number, period: number) => void; onAddOffer: (id: number, url: string) => void; onDelete: (id: number) => void }) {
+function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onTarget, onAddOffer, onDelete }: { product: Product; onClose: () => void; onFavorite: (id: number) => void; onCheck: (id: number) => void; onPeriod: (id: number, period: number) => void; onTarget: (id: number, target?: number) => void; onAddOffer: (id: number, url: string) => void; onDelete: (id: number) => void }) {
   const formatPrice = usePriceFormatter();
   const [offerInputOpen, setOfferInputOpen] = useState(false);
   const [offerUrl, setOfferUrl] = useState("");
   const [forecastOpen, setForecastOpen] = useState(false);
+  const [targetEditing, setTargetEditing] = useState(false);
+  const [targetInput, setTargetInput] = useState(product.target ? String(Math.round(product.target)) : "");
+  const [targetError, setTargetError] = useState("");
   const forecast = forecastFor(product);
   const offers = [...(product.offers ?? [])].sort((a, b) => a.price - b.price);
+
+  function saveTarget(event: FormEvent) {
+    event.preventDefault();
+    const value = Number(targetInput.replace(/\s/g, ""));
+    if (!Number.isFinite(value) || value <= 0 || value > 100_000_000) {
+      setTargetError("Введите цену от 1 до 100 000 000 ₽");
+      return;
+    }
+    onTarget(product.id, Math.round(value));
+    setTargetEditing(false);
+    setTargetError("");
+  }
+
+  function clearTarget() {
+    onTarget(product.id, undefined);
+    setTargetInput("");
+    setTargetEditing(false);
+    setTargetError("");
+  }
 
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
@@ -1374,7 +1424,47 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAdd
             <small>Доверие модели — оценка качества сигнала, а не вероятность роста и не гарантия результата.</small>
           </div>
         )}
-        <div className="target-row"><span>Целевая цена</span><b>{product.target ? formatPrice(product.target) : "Не задана"}</b></div>
+        <div className="target-row">
+          <div className="target-summary">
+            <span>Целевая цена</span>
+            <small>{product.target
+              ? (product.price <= product.target ? "Цель уже достигнута" : `До цели: ${formatPrice(product.price - product.target)}`)
+              : "Укажите порог для Telegram-уведомления"}</small>
+          </div>
+          <button
+            type="button"
+            className="target-edit-button"
+            onClick={() => {
+              setTargetInput(product.target ? String(Math.round(product.target)) : "");
+              setTargetError("");
+              setTargetEditing((current) => !current);
+            }}
+            aria-expanded={targetEditing}
+            aria-controls={`target-editor-${product.id}`}
+          >
+            <b>{product.target ? formatPrice(product.target) : "Не задана"}</b>
+            <small>{targetEditing ? "Закрыть" : "Изменить"}</small>
+          </button>
+        </div>
+        {targetEditing && (
+          <form className="target-edit-form" id={`target-editor-${product.id}`} onSubmit={saveTarget}>
+            <label className="price-input" htmlFor={`detail-target-${product.id}`}>
+              <input
+                id={`detail-target-${product.id}`}
+                inputMode="numeric"
+                min="1"
+                value={targetInput}
+                onChange={(event) => { setTargetInput(event.target.value.replace(/\D/g, "")); setTargetError(""); }}
+                placeholder="Например, 4 500"
+                aria-label="Новая целевая цена"
+              />
+              <span>₽</span>
+            </label>
+            <button className="target-save-button" type="submit">Сохранить</button>
+            {product.target && <button className="target-clear-button" type="button" onClick={clearTarget}>Сбросить</button>}
+            {targetError && <p className="form-error" role="alert">{targetError}</p>}
+          </form>
+        )}
 
         <div className="comparison-head">
           <div><span className="field-label">СРАВНЕНИЕ МАГАЗИНОВ</span><p>{offers.length} {offers.length === 1 ? "предложение" : "предложения"}</p></div>

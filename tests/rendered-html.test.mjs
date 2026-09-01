@@ -35,6 +35,8 @@ test("server-renders the PricePulse product", async () => {
   assert.match(html, /Следи за ценой/);
   assert.match(html, /LIS-SKINS/);
   assert.match(html, /Добавить товар/);
+  assert.match(html, /summary-loader/);
+  assert.doesNotMatch(html, />199(?:\s|&nbsp;)521\s*₽</);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
 });
 
@@ -62,6 +64,8 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /onTarget=/);
   assert.match(page, /targetCheckPending/);
   assert.match(page, /target-edit-form/);
+  assert.match(page, /aria-busy=\{!catalogReady\}/);
+  assert.match(page, /Загружаем ваши товары и актуальную стоимость/);
   assert.match(page, /pricepulse-cloud-migrated:/);
   assert.match(page, /Переносим карточки этого устройства/);
   assert.match(page, /collection-card-open/);
@@ -100,6 +104,8 @@ test("removes the temporary starter preview", async () => {
   assert.match(css, /currency-switch/);
   assert.match(css, /product-art\.has-preview/);
   assert.match(css, /forecast-method/);
+  assert.match(css, /@keyframes summaryShimmer/);
+  assert.match(css, /@keyframes summaryReveal/);
   assert.ok(css.includes(".app-shell { min-height: 100vh; color: var(--ink);"));
   assert.ok(css.includes("--surface: #151713"));
   assert.ok(css.includes("background: var(--preview-surface)"));

@@ -808,6 +808,7 @@ export default function Home() {
   const formatPrice = (value: number) => formatPriceValue(value, currency, rates);
   const totalValue = products.reduce((sum, product) => sum + product.price, 0);
   const favoriteCount = products.filter((product) => product.favorite).length;
+  const summaryUnavailable = catalogReady && syncStatus === "error" && Boolean(telegramInitData.current);
   const displayName = profile?.firstName || "друг";
   const avatarLetter = displayName.slice(0, 1).toLocaleUpperCase("ru");
   const themeStyle = {
@@ -1023,17 +1024,38 @@ export default function Home() {
             <button className="text-link" onClick={() => setToast("Все цены обновляются по заданному расписанию")}>Как это работает <span>↗</span></button>
           </section>
 
-          <section className="summary-card">
-            <div className="summary-copy">
-              <p className="summary-label">СТОИМОСТЬ ВСЕХ ТОВАРОВ</p>
-              <strong>{formatPrice(totalValue)}</strong>
-              <div className="summary-change"><span>↓ 2,4%</span> за последние 7 дней</div>
-            </div>
-            <div className="summary-stats">
-              <div><span>Под наблюдением</span><b>{products.length}</b></div>
-              <div><span>Снижение цены</span><b className="good">{products.filter((item) => item.change < 0).length}</b></div>
-              <div><span>В избранном</span><b>{favoriteCount}</b></div>
-            </div>
+          <section className={`summary-card ${catalogReady ? "is-ready" : "is-loading"}`} aria-busy={!catalogReady}>
+            {!catalogReady ? (
+              <div className="summary-loader" role="status" aria-live="polite">
+                <div className="summary-loader-copy" aria-hidden="true">
+                  <span>СИНХРОНИЗИРУЕМ ПРОФИЛЬ</span>
+                  <i className="summary-skeleton summary-skeleton-price" />
+                  <i className="summary-skeleton summary-skeleton-change" />
+                </div>
+                <div className="summary-loader-stats" aria-hidden="true">
+                  {[0, 1, 2].map((item) => <i className="summary-skeleton" key={item} />)}
+                </div>
+                <span className="sr-only">Загружаем ваши товары и актуальную стоимость</span>
+              </div>
+            ) : summaryUnavailable ? (
+              <div className="summary-load-error" role="alert">
+                <span>!</span>
+                <div><b>Не удалось загрузить стоимость</b><small>{syncMessage || "Откройте приложение ещё раз"}</small></div>
+              </div>
+            ) : (
+              <>
+                <div className="summary-copy">
+                  <p className="summary-label">СТОИМОСТЬ ВСЕХ ТОВАРОВ</p>
+                  <strong>{formatPrice(totalValue)}</strong>
+                  <div className="summary-change"><span>↓ 2,4%</span> за последние 7 дней</div>
+                </div>
+                <div className="summary-stats">
+                  <div><span>Под наблюдением</span><b>{products.length}</b></div>
+                  <div><span>Снижение цены</span><b className="good">{products.filter((item) => item.change < 0).length}</b></div>
+                  <div><span>В избранном</span><b>{favoriteCount}</b></div>
+                </div>
+              </>
+            )}
             <div className="hero-orbit orbit-one" />
             <div className="hero-orbit orbit-two" />
             <div className="hero-dot dot-one" />

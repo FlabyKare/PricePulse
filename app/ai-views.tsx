@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type ProductContext = {
   id: number;
@@ -131,6 +131,7 @@ function fallbackInvestments(): InvestmentsResponse {
 }
 
 export function SmartDiscoveryView({ products }: { products: ProductContext[] }) {
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [mode, setMode] = useState<"search" | "assistant">("search");
   const [query, setQuery] = useState("");
   const [consent, setConsent] = useState(false);
@@ -237,11 +238,14 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
             <p className="eyebrow">КОНТЕКСТНЫЙ AI-ПОИСК</p>
             <h1>Изучим рынок и покажем реальные варианты.</h1>
             <p className="discovery-lead">Проверим живые карточки, цены, рейтинг и отзывы. Для CS2 используем актуальный каталог LIS-SKINS и точные страницы предметов.</p>
-            <form className="discovery-search" onSubmit={(event) => { event.preventDefault(); void searchProducts(); }}>
-              <input type="search" inputMode="search" enterKeyHint="search" autoComplete="off" value={query} onChange={(event) => { setQuery(event.target.value); setError(""); }} placeholder="Например: новый розовый Glock из коллекции CS2" aria-label="Запрос для AI-поиска" />
+            <form className="discovery-search" role="search" onSubmit={(event) => { event.preventDefault(); void searchProducts(); }}>
+              <label className="discovery-query-field" htmlFor="discovery-query-input">
+                <span className="sr-only">Что найти в интернете</span>
+                <input ref={searchInputRef} id="discovery-query-input" name="query" type="search" inputMode="search" enterKeyHint="search" autoComplete="off" value={query} onChange={(event) => { setQuery(event.target.value); setError(""); }} placeholder="Например: новый розовый Glock из коллекции CS2" aria-describedby="discovery-search-help" />
+              </label>
               <button type="submit" disabled={loading}>{loading ? "Ищем…" : "Найти"} <span>→</span></button>
             </form>
-            <p className="search-privacy-note"><span>✓</span> Первый поиск попросит разрешение передать только текст запроса. Профиль и карточки не отправляются.</p>
+            <p className="search-privacy-note" id="discovery-search-help"><span>✓</span> Первый поиск попросит разрешение передать только текст запроса. Профиль и карточки не отправляются.</p>
             <div className="prompt-chips">{prompts.map((prompt) => <button type="button" key={prompt} onClick={() => { setQuery(prompt); void searchProducts(prompt); }}>{prompt}</button>)}</div>
             {error && <p className="discovery-error" role="alert">{error}</p>}
           </div>

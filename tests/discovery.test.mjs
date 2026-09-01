@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 async function loadWorker() {
@@ -16,6 +17,16 @@ async function discover(body) {
     method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body),
   }), env, context);
 }
+
+test("AI search keeps a native focusable field and submit action in Telegram WebView", () => {
+  const view = readFileSync(new URL("../app/ai-views.tsx", import.meta.url), "utf8");
+  const styles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
+  assert.match(view, /<label className="discovery-query-field" htmlFor="discovery-query-input">/);
+  assert.match(view, /<input ref=\{searchInputRef\} id="discovery-query-input" name="query" type="search" inputMode="search" enterKeyHint="search"/);
+  assert.match(view, /<button type="submit" disabled=\{loading\}>/);
+  assert.match(styles, /\.discovery-hero::after[^\n]+pointer-events: none/);
+  assert.match(styles, /\.discovery-search input[^\n]+pointer-events: auto[^\n]+touch-action: manipulation/);
+});
 
 test("requires explicit consent before sending a search query externally", async () => {
   const originalFetch = globalThis.fetch;
@@ -75,7 +86,7 @@ test("returns real product cards with live price rating reviews and direct sourc
       }
       return new Response(
         '<a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.ozon.ru%2Fproduct%2Fsony-wh-1000xm5-black-123456%2F">Sony WH-1000XM5 Black</a>' +
-        '<div class="result__snippet">Цена 19 990 руб. Рейтинг 4.9 из 5.</div>',
+        '<div class="result__snippet">Цена 19 990 руб. Рейтинг 4.9 из 5 · 128 отзывов.</div>',
         { headers: { "content-type": "text/html; charset=utf-8" } },
       );
     }
@@ -91,6 +102,7 @@ test("returns real product cards with live price rating reviews and direct sourc
     assert.match(body.products[0].ratingLabel, /5\.0|4\.9/);
     assert.ok(body.products[0].sources.some((source) => source.url === "https://www.wildberries.ru/catalog/741076063/detail.aspx"));
     assert.ok(body.products[0].sources.some((source) => source.url.includes("ozon.ru/product/sony-wh-1000xm5")));
+    assert.ok(body.products[0].sources.some((source) => source.ratingLabel?.includes("128 отзывов")));
     assert.ok(body.products.some((product) => product.sources.some((source) => source.url.includes("ixbt.com/live/"))));
     assert.ok(body.products.every((product) => product.sources.every((source) => source.verified === true && source.kind !== "поиск" && !source.url.includes("/search"))));
   } finally { globalThis.fetch = originalFetch; }

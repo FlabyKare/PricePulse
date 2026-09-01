@@ -170,6 +170,12 @@ function numericRating(text: string) {
   return Number.isFinite(value) && value >= 1 && value <= 5 ? value : null;
 }
 
+function numericReviewCount(text: string) {
+  const match = text.match(/(\d{1,3}(?:[\s\u00a0]\d{3})*|\d{1,7})\s*(?:отзыв(?:а|ов)?|оцен(?:ка|ки|ок)|review(?:s)?|rating(?:s)?)/i);
+  const value = match ? Number(match[1].replace(/[\s\u00a0]/g, "")) : NaN;
+  return Number.isInteger(value) && value >= 0 && value <= 100_000_000 ? value : null;
+}
+
 function formatRub(value: number) {
   return new Intl.NumberFormat("ru-RU", { style: "currency", currency: "RUB", maximumFractionDigits: 0 }).format(value);
 }
@@ -349,12 +355,15 @@ async function wildberriesCandidates(query: string): Promise<Candidate[]> {
 function sourceFromSearch(result: SearchResult): Source {
   const priceValue = numericPrice(result.description);
   const ratingValue = numericRating(result.description);
+  const reviewCount = numericReviewCount(result.description);
   return {
     title: labelFromUrl(result.url) + " · " + result.title,
     url: result.url,
     kind: result.kind,
     priceLabel: priceValue ? formatRub(priceValue) : undefined,
-    ratingLabel: ratingValue ? ratingValue.toFixed(1) + " / 5" : undefined,
+    ratingLabel: ratingValue
+      ? ratingValue.toFixed(1) + " / 5" + (reviewCount !== null ? " · " + reviewCount.toLocaleString("ru-RU") + " отзывов" : "")
+      : reviewCount !== null ? reviewCount.toLocaleString("ru-RU") + " отзывов" : undefined,
     verified: true,
   };
 }
@@ -362,6 +371,7 @@ function sourceFromSearch(result: SearchResult): Source {
 function candidateFromStoreResult(result: SearchResult, position: number): Candidate {
   const priceValue = numericPrice(result.description);
   const ratingValue = numericRating(result.description);
+  const reviewCount = numericReviewCount(result.description);
   return {
     id: "web-" + position + "-" + encodeURIComponent(result.url).slice(-36),
     name: productName(result.title),
@@ -369,8 +379,10 @@ function candidateFromStoreResult(result: SearchResult, position: number): Candi
     priceValue,
     priceLabel: priceValue ? formatRub(priceValue) : "Цена на странице",
     ratingValue,
-    ratingLabel: ratingValue ? ratingValue.toFixed(1) + " / 5" : "Отзывы на странице",
-    reviewCount: null,
+    ratingLabel: ratingValue
+      ? ratingValue.toFixed(1) + " / 5" + (reviewCount !== null ? " · " + reviewCount.toLocaleString("ru-RU") + " отзывов" : "")
+      : reviewCount !== null ? reviewCount.toLocaleString("ru-RU") + " отзывов" : "Отзывы на странице",
+    reviewCount,
     popularity: "Найдено на рынке",
     sources: [sourceFromSearch(result)],
   };
@@ -396,9 +408,22 @@ function mergeMarketCandidates(query: string, wbItems: Candidate[], stores: Sear
     if (best && bestScore >= 2) {
       attachSource(best, sourceFromSearch(result));
       const discoveredPrice = numericPrice(result.description);
+      const discoveredRating = numericRating(result.description);
+      const discoveredReviews = numericReviewCount(result.description);
       if (discoveredPrice && (!best.priceValue || discoveredPrice < best.priceValue)) {
         best.priceValue = discoveredPrice;
         best.priceLabel = formatRub(discoveredPrice);
+      }
+      if (discoveredReviews !== null && discoveredReviews > (best.reviewCount ?? 0)) {
+        best.reviewCount = discoveredReviews;
+        if (discoveredRating) best.ratingValue = discoveredRating;
+      } else if (discoveredRating && !best.ratingValue) {
+        best.ratingValue = discoveredRating;
+      }
+      if (best.ratingValue) {
+        best.ratingLabel = best.ratingValue.toFixed(1) + " / 5" + (best.reviewCount !== null ? " · " + best.reviewCount.toLocaleString("ru-RU") + " отзывов" : "");
+      } else if (best.reviewCount !== null) {
+        best.ratingLabel = best.reviewCount.toLocaleString("ru-RU") + " отзывов";
       }
     } else {
       candidates.push(candidateFromStoreResult(result, position));

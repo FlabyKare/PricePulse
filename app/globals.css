@@ -151,6 +151,11 @@ h1 { max-width: 690px; margin: 0; font-size: clamp(31px, 5vw, 56px); line-height
 .price-input span { color: #8b8e85; pointer-events: none; }
 .field-hint { margin: 7px 2px 20px; color: #a0a299; font-size: 9px; }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.alert-field { min-width: 0; }
+.alert-mode-switch { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin: 0 0 7px; padding: 4px; border: 1px solid var(--line); border-radius: 11px; background: color-mix(in srgb, var(--card) 78%, var(--paper)); }
+.alert-mode-switch button { min-height: 31px; padding: 0 8px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); font-size: 8px; font-weight: 850; cursor: pointer; }
+.alert-mode-switch button.selected { background: var(--surface); color: var(--lime); box-shadow: 0 5px 14px rgba(20,22,18,.13); }
+.alert-mode-switch.compact { grid-column: 1 / -1; margin-bottom: 0; }
 select, .standalone-input { width: 100%; height: 50px; padding: 0 13px; border: 1px solid #dcdad2; border-radius: 12px; background: var(--card); font-size: 12px; outline: none; }
 .standalone-input { margin-top: 10px; }
 .frequency-label { margin-top: 22px; }
@@ -201,6 +206,7 @@ select, .standalone-input { width: 100%; height: 50px; padding: 0 13px; border: 
 .target-edit-button small { color: var(--green); font-size: 7px; font-weight: 850; }
 .target-edit-form { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 7px; padding: 11px 0 14px; border-bottom: 1px solid var(--line); }
 .target-edit-form .price-input { margin: 0; }
+.alert-edit-form .alert-mode-switch { grid-column: 1 / -1; }
 .target-edit-form .form-error { grid-column: 1 / -1; margin: 0; }
 .target-save-button, .target-clear-button { min-height: 42px; padding: 0 12px; border-radius: 10px; font-size: 9px; font-weight: 850; cursor: pointer; }
 .target-save-button { border: 0; background: var(--surface); color: var(--paper); }

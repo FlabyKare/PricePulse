@@ -5,6 +5,7 @@ import { profileStates } from "@/db/schema";
 import { findLisSkinsItem, isLisSkinsUrl, parseCbrUsdRate, rubPriceFromUsd, type LisSkinsExportItem } from "@/lib/lis-skins";
 import {
   applyObservedPrice,
+  alertSettings,
   isPriceCheckDue,
   priceNotification,
   type MonitoredProduct,
@@ -115,14 +116,16 @@ async function sendPriceNotification(
   product: MonitoredProduct,
   notification: NonNullable<ReturnType<typeof priceNotification>>,
 ) {
-  const title = notification.targetReached ? "🎯 <b>Целевая цена достигнута</b>" : "🔔 <b>Цена изменилась</b>";
+  const title = "🔔 <b>Порог изменения цены достигнут</b>";
   const direction = notification.percent > 0 ? "выросла" : "снизилась";
-  const statusLine = notification.targetReached
-    ? `Цена достигла заданного порога <b>${formatRub(Number(product.target))}</b>.`
-    : `Цена ${direction} на ${Math.abs(notification.percent).toLocaleString("ru-RU")}%.`;
-  const priceLines = notification.priceChanged
-    ? [`Было: <s>${formatRub(notification.previous)}</s>`, `Стало: <b>${formatRub(notification.next)}</b>`]
-    : [`Текущая цена: <b>${formatRub(notification.next)}</b>`];
+  const actualChange = notification.alertMode === "percent"
+    ? `${Math.abs(notification.percent).toLocaleString("ru-RU")}%`
+    : formatRub(Math.abs(notification.deltaAmount));
+  const configuredThreshold = notification.alertMode === "percent"
+    ? `${notification.alertThreshold.toLocaleString("ru-RU")}%`
+    : formatRub(notification.alertThreshold);
+  const statusLine = `Цена ${direction} на <b>${actualChange}</b>. Заданный порог: ±${configuredThreshold}.`;
+  const priceLines = [`База отсчёта: <s>${formatRub(notification.previous)}</s>`, `Стало: <b>${formatRub(notification.next)}</b>`];
   const text = [
     title,
     "",
@@ -176,13 +179,16 @@ export async function POST(request: Request) {
         const nextPrice = await resolvePrice(product);
         const notification = priceNotification(product, nextPrice);
         const updated = applyObservedPrice(product, nextPrice, capturedAt);
-        const target = Number(product.target);
+        const configuredAlert = alertSettings(product);
         products[index] = {
           ...updated,
-          targetAlerted: target > 0
-            ? (notification?.targetReached ? true : nextPrice > target ? false : Boolean(product.targetAlerted))
-            : false,
-          targetCheckPending: false,
+          alertMode: configuredAlert?.mode,
+          alertThreshold: configuredAlert?.threshold,
+          alertReferencePrice: configuredAlert ? (notification ? nextPrice : configuredAlert.reference) : undefined,
+          alertCheckPending: false,
+          target: undefined,
+          targetAlerted: undefined,
+          targetCheckPending: undefined,
         };
         profileChanged = true;
         if (notification) notifications.push({ product, value: notification });

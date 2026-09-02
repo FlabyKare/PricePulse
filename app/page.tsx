@@ -38,6 +38,10 @@ type Product = {
   target?: number;
   targetAlerted?: boolean;
   targetCheckPending?: boolean;
+  alertMode?: "amount" | "percent";
+  alertThreshold?: number;
+  alertReferencePrice?: number;
+  alertCheckPending?: boolean;
   offers?: Offer[];
 };
 
@@ -84,6 +88,7 @@ type Palette = {
 };
 
 type CurrencyCode = "RUB" | "USD" | "EUR";
+type PriceAlertSettings = { mode: "amount" | "percent"; threshold: number };
 type CurrencyRates = { RUB: 1; USD: number; EUR: number };
 
 type TelegramProfile = {
@@ -159,7 +164,9 @@ const initialProducts: Product[] = [
     art: "AK",
     artClass: "violet",
     favorite: true,
-    target: 4500,
+    alertMode: "amount",
+    alertThreshold: 500,
+    alertReferencePrice: 4763,
     offers: [
       { id: "lis-ak", store: "LIS-SKINS", price: 4763, url: "https://lis-skins.com/market/csgo/ak-47-nightwish-field-tested/", note: "Моментальная выдача" },
       { id: "steam-ak", store: "STEAM", price: 5290, url: "https://steamcommunity.com/market/", note: "Баланс Steam" },
@@ -180,7 +187,9 @@ const initialProducts: Product[] = [
     art: "M4",
     artClass: "amber",
     favorite: false,
-    target: 7900,
+    alertMode: "amount",
+    alertThreshold: 500,
+    alertReferencePrice: 8390,
     offers: [
       { id: "lis-m4", store: "LIS-SKINS", price: 8390, url: "https://lis-skins.com/market/csgo/m4a1-s-player-two-minimal-wear/", note: "Моментальная выдача" },
       { id: "steam-m4", store: "STEAM", price: 8970, url: "https://steamcommunity.com/market/", note: "Баланс Steam" },
@@ -201,7 +210,9 @@ const initialProducts: Product[] = [
     art: "95",
     artClass: "blue",
     favorite: true,
-    target: 15500,
+    alertMode: "percent",
+    alertThreshold: 5,
+    alertReferencePrice: 16890,
     offers: [
       { id: "poizon-95", store: "POIZON", price: 16890, url: "https://www.poizon.com/product/nike-air-max-95", note: "Проверка подлинности" },
       { id: "lamoda-95", store: "LAMODA", price: 17990, url: "https://www.lamoda.ru/", note: "Быстрая доставка" },
@@ -359,10 +370,25 @@ function forecastFor(product: Product) {
 
 function normalizeProduct(product: Product): Product {
   const normalizedHistory = normalizePriceHistory(product.priceHistory);
+  const legacyThreshold = Number(product.target);
+  const configuredThreshold = Number(product.alertThreshold);
+  const alertThreshold = Number.isFinite(configuredThreshold) && configuredThreshold > 0
+    ? configuredThreshold
+    : Number.isFinite(legacyThreshold) && legacyThreshold > 0 ? legacyThreshold : undefined;
+  const configuredReference = Number(product.alertReferencePrice);
   return {
     ...product,
     imageUrl: typeof product.imageUrl === "string" && /^https:\/\//i.test(product.imageUrl) ? product.imageUrl : undefined,
     priceHistory: normalizedHistory.length ? normalizedHistory : appendPriceObservation(undefined, product.price),
+    alertMode: product.alertMode === "percent" ? "percent" : "amount",
+    alertThreshold,
+    alertReferencePrice: alertThreshold
+      ? (Number.isFinite(configuredReference) && configuredReference > 0 ? configuredReference : product.price)
+      : undefined,
+    alertCheckPending: product.alertCheckPending === true || product.targetCheckPending === true,
+    target: undefined,
+    targetAlerted: undefined,
+    targetCheckPending: undefined,
     offers: product.offers?.length
       ? product.offers
       : [{ id: `${product.id}-${product.source}`, store: product.source, price: product.price, url: product.url, note: "Основной магазин" }],
@@ -1133,24 +1159,28 @@ export default function Home() {
           onCheck={checkPrice}
           onAddOffer={addOffer}
           onDelete={deleteProduct}
-          onTarget={(id, target) => {
-            setProducts((current) => current.map((product) => product.id === id ? {
+          onAlert={(id, settings) => {
+            const withAlert = (product: Product): Product => ({
               ...product,
-              target,
-              targetAlerted: false,
-              targetCheckPending: Boolean(target),
-              nextCheck: target ? "проверка цели в течение минуты" : `через ${product.period} ч`,
-            } : product));
-            setSelected((current) => current ? {
-              ...current,
-              target,
-              targetAlerted: false,
-              targetCheckPending: Boolean(target),
-              nextCheck: target ? "проверка цели в течение минуты" : `через ${current.period} ч`,
-            } : current);
-            setToast(target
-              ? `Цель обновлена: ${formatPrice(target)} · проверим в течение минуты`
-              : "Целевая цена отключена");
+              alertMode: settings?.mode,
+              alertThreshold: settings?.threshold,
+              alertReferencePrice: settings ? product.price : undefined,
+              alertCheckPending: Boolean(settings),
+              target: undefined,
+              targetAlerted: undefined,
+              targetCheckPending: undefined,
+              nextCheck: settings ? "проверка порога в течение минуты" : `через ${product.period} ч`,
+            });
+            setProducts((current) => current.map((product) => product.id === id ? withAlert(product) : product));
+            setSelected((current) => current ? withAlert(current) : current);
+            if (settings) {
+              const thresholdLabel = settings.mode === "percent"
+                ? `${settings.threshold.toLocaleString("ru-RU")}%`
+                : `${Math.round(settings.threshold).toLocaleString("ru-RU")} ₽`;
+              setToast(`Уведомим при изменении на ±${thresholdLabel}`);
+            } else {
+              setToast("Уведомления об изменении цены отключены");
+            }
           }}
           onPeriod={(id, period) => {
             setProducts((current) => current.map((product) => product.id === id ? { ...product, period, nextCheck: `через ${period} ч` } : product));
@@ -1206,7 +1236,8 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
   const [customPeriod, setCustomPeriod] = useState("");
   const [category, setCategory] = useState("CS2");
   const [customCategory, setCustomCategory] = useState("");
-  const [target, setTarget] = useState("");
+  const [alertMode, setAlertMode] = useState<PriceAlertSettings["mode"]>("amount");
+  const [alertThreshold, setAlertThreshold] = useState("");
   const [manualPrice, setManualPrice] = useState("");
   const [manualName, setManualName] = useState("");
   const [loading, setLoading] = useState(false);
@@ -1230,11 +1261,18 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
     }
     const isLis = isLisSkinsUrl(parsedUrl.href);
     const enteredPrice = Number(manualPrice.replace(/\s/g, "").replace(",", "."));
-    const enteredTarget = target ? Number(target) : null;
-    if (enteredTarget !== null && (!Number.isFinite(enteredTarget) || enteredTarget <= 0 || enteredTarget > 100_000_000)) {
-      setError("Цена для уведомления должна быть от 1 до 100 000 000 ₽");
+    const enteredAlert = alertThreshold ? Number(alertThreshold.replace(/\s/g, "").replace(",", ".")) : null;
+    const alertLimit = alertMode === "percent" ? 100 : 100_000_000;
+    const alertMinimum = alertMode === "percent" ? 0.1 : 1;
+    if (enteredAlert !== null && (!Number.isFinite(enteredAlert) || enteredAlert < alertMinimum || enteredAlert > alertLimit)) {
+      setError(alertMode === "percent"
+        ? "Процент изменения должен быть от 0,1% до 100%"
+        : "Сумма изменения должна быть от 1 до 100 000 000 ₽");
       return;
     }
+    const normalizedAlert = enteredAlert === null
+      ? undefined
+      : alertMode === "percent" ? Math.round(enteredAlert * 10) / 10 : Math.round(enteredAlert);
 
     setLoading(true);
     setError("");
@@ -1282,9 +1320,10 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
         favorite: false,
         imageUrl: resolved?.imageUrl ?? undefined,
         priceHistory: [{ price: currentPrice, capturedAt: new Date(now).toISOString() }],
-        target: enteredTarget ?? undefined,
-        targetAlerted: false,
-        targetCheckPending: false,
+        alertMode,
+        alertThreshold: normalizedAlert,
+        alertReferencePrice: normalizedAlert ? currentPrice : undefined,
+        alertCheckPending: false,
         offers: [{
           id: `${now}-${parsedUrl.hostname}`,
           store: source,
@@ -1337,9 +1376,17 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
                 <option value="Другое">Другое</option>
               </select>
             </div>
-            <div>
-              <label className="field-label" htmlFor="target-price">Цена для уведомления</label>
-              <label className="price-input" htmlFor="target-price"><input id="target-price" min="1" inputMode="numeric" value={target} onChange={(event) => setTarget(event.target.value.replace(/\D/g, ""))} placeholder="Например, 4 500" /><span>₽</span></label>
+            <div className="alert-field">
+              <label className="field-label" htmlFor="alert-threshold">Уведомлять при изменении</label>
+              <div className="alert-mode-switch" role="radiogroup" aria-label="Тип порога уведомления">
+                <button type="button" role="radio" aria-checked={alertMode === "amount"} className={alertMode === "amount" ? "selected" : ""} onClick={() => { setAlertMode("amount"); setError(""); }}>₽ Сумма</button>
+                <button type="button" role="radio" aria-checked={alertMode === "percent"} className={alertMode === "percent" ? "selected" : ""} onClick={() => { setAlertMode("percent"); setError(""); }}>% Процент</button>
+              </div>
+              <label className="price-input" htmlFor="alert-threshold">
+                <input id="alert-threshold" inputMode="decimal" value={alertThreshold} onChange={(event) => setAlertThreshold(event.target.value.replace(/[^\d,.\s]/g, ""))} placeholder={alertMode === "percent" ? "Например, 10" : "Например, 50 000"} />
+                <span>{alertMode === "percent" ? "%" : "₽"}</span>
+              </label>
+              <p className="field-hint">Считаем в обе стороны от цены на момент настройки</p>
             </div>
           </div>
           {category === "Другое" && <input className="standalone-input" value={customCategory} onChange={(event) => setCustomCategory(event.target.value)} placeholder="Название новой категории" aria-label="Новая категория" />}
@@ -1358,41 +1405,47 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
             <span>часов</span>
           </label>
           {error && <p className="form-error" role="alert">{error}</p>}
-          <div className="smart-note"><span>✦</span><p><b>Умные уведомления</b><br />Сообщим в Telegram, когда цена достигнет цели или резко снизится.</p></div>
+          <div className="smart-note"><span>✦</span><p><b>Точный порог</b><br />Сообщим только когда цена изменится на заданную сумму или процент. После уведомления отсчёт начнётся заново.</p></div>
           <button className="primary-button" type="submit" disabled={loading}>{loading ? "Распознаём товар…" : "Начать мониторинг"} <span>→</span></button>
         </form>
       </section>
     </div>
   );
 }
-function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onTarget, onAddOffer, onDelete }: { product: Product; onClose: () => void; onFavorite: (id: number) => void; onCheck: (id: number) => void; onPeriod: (id: number, period: number) => void; onTarget: (id: number, target?: number) => void; onAddOffer: (id: number, url: string) => void; onDelete: (id: number) => void }) {
+function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAlert, onAddOffer, onDelete }: { product: Product; onClose: () => void; onFavorite: (id: number) => void; onCheck: (id: number) => void; onPeriod: (id: number, period: number) => void; onAlert: (id: number, settings?: PriceAlertSettings) => void; onAddOffer: (id: number, url: string) => void; onDelete: (id: number) => void }) {
   const formatPrice = usePriceFormatter();
   const [offerInputOpen, setOfferInputOpen] = useState(false);
   const [offerUrl, setOfferUrl] = useState("");
   const [forecastOpen, setForecastOpen] = useState(false);
-  const [targetEditing, setTargetEditing] = useState(false);
-  const [targetInput, setTargetInput] = useState(product.target ? String(Math.round(product.target)) : "");
-  const [targetError, setTargetError] = useState("");
+  const [alertEditing, setAlertEditing] = useState(false);
+  const [alertMode, setAlertMode] = useState<PriceAlertSettings["mode"]>(product.alertMode === "percent" ? "percent" : "amount");
+  const [alertInput, setAlertInput] = useState(product.alertThreshold ? String(product.alertThreshold) : "");
+  const [alertError, setAlertError] = useState("");
   const forecast = forecastFor(product);
   const offers = [...(product.offers ?? [])].sort((a, b) => a.price - b.price);
 
-  function saveTarget(event: FormEvent) {
+  function saveAlert(event: FormEvent) {
     event.preventDefault();
-    const value = Number(targetInput.replace(/\s/g, ""));
-    if (!Number.isFinite(value) || value <= 0 || value > 100_000_000) {
-      setTargetError("Введите цену от 1 до 100 000 000 ₽");
+    const value = Number(alertInput.replace(/\s/g, "").replace(",", "."));
+    const limit = alertMode === "percent" ? 100 : 100_000_000;
+    const minimum = alertMode === "percent" ? 0.1 : 1;
+    if (!Number.isFinite(value) || value < minimum || value > limit) {
+      setAlertError(alertMode === "percent"
+        ? "Введите процент от 0,1% до 100%"
+        : "Введите сумму от 1 до 100 000 000 ₽");
       return;
     }
-    onTarget(product.id, Math.round(value));
-    setTargetEditing(false);
-    setTargetError("");
+    const threshold = alertMode === "percent" ? Math.round(value * 10) / 10 : Math.round(value);
+    onAlert(product.id, { mode: alertMode, threshold });
+    setAlertEditing(false);
+    setAlertError("");
   }
 
-  function clearTarget() {
-    onTarget(product.id, undefined);
-    setTargetInput("");
-    setTargetEditing(false);
-    setTargetError("");
+  function clearAlert() {
+    onAlert(product.id, undefined);
+    setAlertInput("");
+    setAlertEditing(false);
+    setAlertError("");
   }
 
   return (
@@ -1448,43 +1501,50 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onTar
         )}
         <div className="target-row">
           <div className="target-summary">
-            <span>Целевая цена</span>
-            <small>{product.target
-              ? (product.price <= product.target ? "Цель уже достигнута" : `До цели: ${formatPrice(product.price - product.target)}`)
-              : "Укажите порог для Telegram-уведомления"}</small>
+            <span>Порог уведомления</span>
+            <small>{product.alertThreshold
+              ? `Отсчёт от ${formatPrice(product.alertReferencePrice || product.price)} · рост или снижение`
+              : "Бот не присылает уведомления без заданного порога"}</small>
           </div>
           <button
             type="button"
             className="target-edit-button"
             onClick={() => {
-              setTargetInput(product.target ? String(Math.round(product.target)) : "");
-              setTargetError("");
-              setTargetEditing((current) => !current);
+              setAlertMode(product.alertMode === "percent" ? "percent" : "amount");
+              setAlertInput(product.alertThreshold ? String(product.alertThreshold) : "");
+              setAlertError("");
+              setAlertEditing((current) => !current);
             }}
-            aria-expanded={targetEditing}
-            aria-controls={`target-editor-${product.id}`}
+            aria-expanded={alertEditing}
+            aria-controls={`alert-editor-${product.id}`}
           >
-            <b>{product.target ? formatPrice(product.target) : "Не задана"}</b>
-            <small>{targetEditing ? "Закрыть" : "Изменить"}</small>
+            <b>{product.alertThreshold
+              ? (product.alertMode === "percent" ? `${product.alertThreshold.toLocaleString("ru-RU")}%` : formatPrice(product.alertThreshold))
+              : "Не задан"}</b>
+            <small>{alertEditing ? "Закрыть" : "Изменить"}</small>
           </button>
         </div>
-        {targetEditing && (
-          <form className="target-edit-form" id={`target-editor-${product.id}`} onSubmit={saveTarget}>
-            <label className="price-input" htmlFor={`detail-target-${product.id}`}>
+        {alertEditing && (
+          <form className="target-edit-form alert-edit-form" id={`alert-editor-${product.id}`} onSubmit={saveAlert}>
+            <div className="alert-mode-switch compact" role="radiogroup" aria-label="Тип порога уведомления">
+              <button type="button" role="radio" aria-checked={alertMode === "amount"} className={alertMode === "amount" ? "selected" : ""} onClick={() => { setAlertMode("amount"); setAlertError(""); }}>₽ Сумма</button>
+              <button type="button" role="radio" aria-checked={alertMode === "percent"} className={alertMode === "percent" ? "selected" : ""} onClick={() => { setAlertMode("percent"); setAlertError(""); }}>% Процент</button>
+            </div>
+            <label className="price-input" htmlFor={`detail-alert-${product.id}`}>
               <input
-                id={`detail-target-${product.id}`}
-                inputMode="numeric"
-                min="1"
-                value={targetInput}
-                onChange={(event) => { setTargetInput(event.target.value.replace(/\D/g, "")); setTargetError(""); }}
-                placeholder="Например, 4 500"
-                aria-label="Новая целевая цена"
+                id={`detail-alert-${product.id}`}
+                inputMode="decimal"
+                min={alertMode === "percent" ? "0.1" : "1"}
+                value={alertInput}
+                onChange={(event) => { setAlertInput(event.target.value.replace(/[^\d,.\s]/g, "")); setAlertError(""); }}
+                placeholder={alertMode === "percent" ? "Например, 10" : "Например, 50 000"}
+                aria-label={alertMode === "percent" ? "Процент изменения цены" : "Сумма изменения цены"}
               />
-              <span>₽</span>
+              <span>{alertMode === "percent" ? "%" : "₽"}</span>
             </label>
             <button className="target-save-button" type="submit">Сохранить</button>
-            {product.target && <button className="target-clear-button" type="button" onClick={clearTarget}>Сбросить</button>}
-            {targetError && <p className="form-error" role="alert">{targetError}</p>}
+            {product.alertThreshold && <button className="target-clear-button" type="button" onClick={clearAlert}>Сбросить</button>}
+            {alertError && <p className="form-error" role="alert">{alertError}</p>}
           </form>
         )}
 

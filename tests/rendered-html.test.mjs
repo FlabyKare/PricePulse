@@ -41,7 +41,7 @@ test("server-renders the PricePulse product", async () => {
 });
 
 test("removes the temporary starter preview", async () => {
-  const [css, page, aiViews, discoverRoute, cs2InvestmentsRoute, resolveRoute, profileRoute, layout, packageJson] = await Promise.all([
+  const [css, page, aiViews, discoverRoute, cs2InvestmentsRoute, resolveRoute, profileRoute, notificationRoute, priceMonitor, layout, packageJson] = await Promise.all([
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/ai-views.tsx", import.meta.url), "utf8"),
@@ -49,6 +49,8 @@ test("removes the temporary starter preview", async () => {
     readFile(new URL("../app/api/cs2-investments/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/products/resolve/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/profile/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/notifications/run/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/price-monitor.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../package.json", import.meta.url), "utf8"),
   ]);
@@ -61,9 +63,12 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /revision: profileRevision\.current/);
   assert.match(page, /response\.status === 409/);
   assert.match(page, /pendingProductDeletions/);
-  assert.match(page, /onTarget=/);
-  assert.match(page, /targetCheckPending/);
+  assert.match(page, /onAlert=/);
+  assert.match(page, /alertCheckPending/);
   assert.match(page, /target-edit-form/);
+  assert.match(page, /Уведомлять при изменении/);
+  assert.match(page, /alert-mode-switch/);
+  assert.match(page, /Процент изменения цены/);
   assert.match(page, /aria-busy=\{!catalogReady\}/);
   assert.match(page, /Загружаем ваши товары и актуальную стоимость/);
   assert.match(page, /pricepulse-cloud-migrated:/);
@@ -73,6 +78,11 @@ test("removes the temporary starter preview", async () => {
   assert.match(profileRoute, /deletedProductIds/);
   assert.match(profileRoute, /stored\.revision !== state\.revision/);
   assert.match(profileRoute, /profileStates\.revision\} \+ 1/);
+  assert.match(notificationRoute, /Порог изменения цены достигнут/);
+  assert.match(notificationRoute, /alertReferencePrice/);
+  assert.doesNotMatch(notificationRoute, /targetReached/);
+  assert.match(priceMonitor, /Math\.abs\(deltaAmount\) >= settings\.threshold/);
+  assert.match(priceMonitor, /Math\.abs\(rawPercent\) >= settings\.threshold/);
   assert.match(page, /ИИ-поиск/);
   assert.match(aiViews, /enterKeyHint="search"/);
   assert.match(aiViews, /Разрешить и продолжить/);
@@ -104,6 +114,7 @@ test("removes the temporary starter preview", async () => {
   assert.match(css, /currency-switch/);
   assert.match(css, /product-art\.has-preview/);
   assert.match(css, /forecast-method/);
+  assert.match(css, /\.alert-mode-switch/);
   assert.match(css, /@keyframes summaryShimmer/);
   assert.match(css, /@keyframes summaryReveal/);
   assert.ok(css.includes(".app-shell { min-height: 100vh; color: var(--ink);"));

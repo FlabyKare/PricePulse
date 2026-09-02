@@ -1,4 +1,5 @@
 export type MonitoredPricePoint = { price: number; capturedAt: string };
+export type AlertMode = "amount" | "percent";
 
 export type MonitoredProduct = {
   id: number;
@@ -13,15 +14,17 @@ export type MonitoredProduct = {
   target?: number;
   targetAlerted?: boolean;
   targetCheckPending?: boolean;
+  alertMode?: AlertMode;
+  alertThreshold?: number;
+  alertReferencePrice?: number;
+  alertCheckPending?: boolean;
   priceHistory?: MonitoredPricePoint[];
   offers?: Array<{ id: string; store: string; price: number; url: string; note: string }>;
 };
 
 const FIRST_CHECK_DELAY_MS = 2 * 60 * 1000;
-const MIN_PRICE_CHANGE_PERCENT = 0.1;
-
 export function isPriceCheckDue(product: MonitoredProduct, now = Date.now()) {
-  if (product.targetCheckPending === true) return true;
+  if (product.alertCheckPending === true || product.targetCheckPending === true) return true;
   const history = Array.isArray(product.priceHistory) ? product.priceHistory : [];
   const lastCapturedAt = history.at(-1)?.capturedAt;
   const lastChecked = lastCapturedAt ? Date.parse(lastCapturedAt) : 0;
@@ -32,6 +35,20 @@ export function isPriceCheckDue(product: MonitoredProduct, now = Date.now()) {
   return now - lastChecked >= interval;
 }
 
+export function alertSettings(product: MonitoredProduct) {
+  const legacyThreshold = Number(product.target);
+  const configuredThreshold = Number(product.alertThreshold);
+  const threshold = Number.isFinite(configuredThreshold) && configuredThreshold > 0
+    ? configuredThreshold
+    : Number.isFinite(legacyThreshold) && legacyThreshold > 0 ? legacyThreshold : 0;
+  if (!threshold) return null;
+  const mode: AlertMode = product.alertMode === "percent" ? "percent" : "amount";
+  const configuredReference = Number(product.alertReferencePrice);
+  const currentPrice = Number(product.price);
+  const reference = Number.isFinite(configuredReference) && configuredReference > 0 ? configuredReference : currentPrice;
+  if (!Number.isFinite(reference) || reference <= 0) return null;
+  return { mode, threshold, reference };
+}
 export function applyObservedPrice(product: MonitoredProduct, price: number, capturedAt: string) {
   const previous = Number(product.price) > 0 ? Number(product.price) : price;
   const change = previous > 0 ? Math.round(((price - previous) / previous) * 1000) / 10 : 0;
@@ -56,22 +73,23 @@ export function applyObservedPrice(product: MonitoredProduct, price: number, cap
 }
 
 export function priceNotification(product: MonitoredProduct, nextPrice: number) {
-  const previous = Number(product.price);
-  if (!Number.isFinite(previous) || previous <= 0 || !Number.isFinite(nextPrice) || nextPrice <= 0) return null;
-  const rawPercent = ((nextPrice - previous) / previous) * 100;
+  const settings = alertSettings(product);
+  if (!settings || !Number.isFinite(nextPrice) || nextPrice <= 0) return null;
+  const deltaAmount = nextPrice - settings.reference;
+  const rawPercent = (deltaAmount / settings.reference) * 100;
   const roundedPercent = Math.round(rawPercent * 10) / 10;
   const percent = Object.is(roundedPercent, -0) ? 0 : roundedPercent;
-  const priceChanged = Math.round(nextPrice) !== Math.round(previous)
-    && Math.abs(rawPercent) >= MIN_PRICE_CHANGE_PERCENT;
-  const targetReached = Number(product.target) > 0
-    && nextPrice <= Number(product.target)
-    && (previous > Number(product.target) || product.targetAlerted !== true);
-  if (!priceChanged && !targetReached) return null;
+  const thresholdReached = settings.mode === "percent"
+    ? Math.abs(rawPercent) >= settings.threshold
+    : Math.abs(deltaAmount) >= settings.threshold;
+  if (!thresholdReached) return null;
   return {
-    previous,
+    previous: settings.reference,
     next: nextPrice,
     percent,
-    priceChanged,
-    targetReached,
+    deltaAmount,
+    alertMode: settings.mode,
+    alertThreshold: settings.threshold,
+    thresholdReached: true,
   };
 }

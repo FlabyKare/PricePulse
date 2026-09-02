@@ -35,6 +35,8 @@ type WbProduct = {
 const LIS_EXPORT_URL = "https://lis-skins.com/market_export_json/csgo.json";
 const WB_SEARCH_URL = "https://search.wb.ru/exactmatch/ru/common/v18/search";
 const LIS_CACHE_TTL_MS = 5 * 60 * 1000;
+const MIN_RECOMMENDED_RATING = 4.5;
+const MIN_RECOMMENDED_REVIEWS = 5;
 let lisCatalogueCache: { items: LisCatalogueItem[]; expiresAt: number } | null = null;
 
 function decodeEntities(value: string) {
@@ -181,13 +183,42 @@ function formatRub(value: number) {
 }
 
 function queryTokens(value: string) {
-  const stop = new Set(["купить", "цена", "цены", "отзывы", "обзор", "лучший", "лучшие", "товар", "товары", "для", "или", "до", "руб", "рублей"]);
+  const stop = new Set(["купить", "цена", "цены", "отзывы", "обзор", "лучший", "лучшие", "товар", "товары", "для", "или", "до", "руб", "рублей", "качестве", "второй", "второго", "вторая", "вторую", "нужен", "нужна", "нужно", "хочу", "ищу"]);
   return value.toLocaleLowerCase("ru").split(/[^\p{L}\p{N}]+/u).filter((token) => token.length > 2 && !stop.has(token));
 }
 
 function tokenScore(left: string, right: string) {
   const rightText = right.toLocaleLowerCase("ru");
   return queryTokens(left).reduce((score, token) => score + (rightText.includes(token) ? 1 : 0), 0);
+}
+
+const accessoryPattern = /кабел|кронштейн|подставк|держател|креплен|адаптер|переходник|удлинител|чехол|защитн.*стекл|зарядн|ремеш|фильтр|картридж|пульт|накладк|сумк|кейс/i;
+const productRules = [
+  { query: /монитор/i, candidate: /монитор|дисплей/i },
+  { query: /наушник|гарнитур/i, candidate: /наушник|гарнитур|headphone|earbuds/i },
+  { query: /телефон|смартфон/i, candidate: /телефон|смартфон|iphone|galaxy|pixel/i },
+  { query: /ноутбук/i, candidate: /ноутбук|laptop|macbook/i },
+  { query: /телевизор/i, candidate: /телевизор|smart\s*tv/i },
+  { query: /планшет/i, candidate: /планшет|ipad|tablet/i },
+  { query: /видеокарт/i, candidate: /видеокарт|geforce|radeon/i },
+  { query: /пылесос/i, candidate: /пылесос/i },
+  { query: /кофемашин/i, candidate: /кофемашин/i },
+  { query: /холодильник/i, candidate: /холодильник/i },
+] as const;
+
+function matchesRequestedProduct(query: string, candidateName: string) {
+  const rule = productRules.find((item) => item.query.test(query));
+  if (rule && !rule.candidate.test(candidateName)) return false;
+  if (accessoryPattern.test(query)) return true;
+  const accessoryIndex = candidateName.search(accessoryPattern);
+  if (accessoryIndex < 0) return true;
+  const productIndex = rule ? candidateName.search(rule.candidate) : -1;
+  return productIndex >= 0 && productIndex < accessoryIndex && !/мониторн\p{L}*\s+кабел/iu.test(candidateName);
+}
+
+function hasVerifiedQuality(candidate: Candidate) {
+  return (candidate.ratingValue ?? 0) >= MIN_RECOMMENDED_RATING
+    && (candidate.reviewCount ?? 0) >= MIN_RECOMMENDED_REVIEWS;
 }
 
 function budgetFromQuery(query: string) {
@@ -199,6 +230,8 @@ function budgetFromQuery(query: string) {
 
 function catalogueQuery(query: string) {
   const cleaned = query
+    .replace(/в\s+качестве\s+(?:второго|второй|вторую|дополнительного|дополнительной)/gi, " ")
+    .replace(/(?:^|\s)(?:хочу|ищу|нужен|нужна|нужно|подскажи|покажи)(?=\s|$)/gi, " ")
     .replace(/(?:до|бюджет(?:ом)?|не дороже)\s*\d[\d\s]{2,8}(?:\s*(?:₽|руб(?:\.|лей)?))?/gi, " ")
     .replace(/\b(?:купить|цена|цены|отзывы|обзор|лучший|лучшие|подбери|найди)\b/gi, " ")
     .replace(/\s+/g, " ")
@@ -314,6 +347,7 @@ async function wildberriesCandidates(query: string): Promise<Candidate[]> {
       const name = brand && !rawName.toLocaleLowerCase("ru").includes(brand.toLocaleLowerCase("ru"))
         ? brand + " " + rawName
         : rawName;
+      if (!matchesRequestedProduct(query, name)) return [];
       const rating = Number.isFinite(ratingValue) && ratingValue > 0 ? ratingValue : null;
       const reviews = Number.isInteger(reviewCount) && reviewCount >= 0 ? reviewCount : null;
       const priceLabel = formatRub(priceValue);
@@ -576,7 +610,7 @@ async function rankWithOpenRouter(query: string, candidates: Candidate[]) {
         messages: [
           {
             role: "system",
-            content: "Ты ранжируешь только предоставленные реальные карточки. Не придумывай товары, цены, оценки или ссылки. Верни JSON вида {\"ordered_ids\":[\"id\"]}.",
+            content: "Ты фильтруешь и ранжируешь только предоставленные реальные карточки. Оставляй лишь сам товар из запроса: не включай кабели, чехлы, крепления, адаптеры и другие аксессуары, если их явно не просили. Учитывай рейтинг, число отзывов, релевантность и цену. Не придумывай товары, цены, оценки или ссылки. Верни JSON вида {\"ordered_ids\":[\"id\"]}; отсутствующие id считаются отклонёнными.",
           },
           {
             role: "user",
@@ -606,9 +640,11 @@ async function rankWithOpenRouter(query: string, candidates: Candidate[]) {
     if (!Array.isArray(parsed.ordered_ids)) return { candidates, used: false };
     const order = parsed.ordered_ids.filter((id): id is string => typeof id === "string");
     const byId = new Map(candidates.map((candidate) => [candidate.id, candidate]));
-    const ranked = order.flatMap((id) => byId.has(id) ? [byId.get(id)!] : []);
-    for (const candidate of candidates) if (!ranked.includes(candidate)) ranked.push(candidate);
-    return { candidates: ranked, used: ranked.length > 0 };
+    const ranked = order
+      .flatMap((id) => byId.has(id) ? [byId.get(id)!] : [])
+      .filter((candidate, position, all) => all.indexOf(candidate) === position)
+      .slice(0, 6);
+    return ranked.length ? { candidates: ranked, used: true } : { candidates, used: false };
   } catch {
     return { candidates, used: false };
   }
@@ -679,15 +715,18 @@ export async function POST(request: Request) {
     ]);
     const wbItems = wbResult.status === "fulfilled" ? wbResult.value : [];
     const stores = [...(storeResult.status === "fulfilled" ? storeResult.value : []), ...(jinaStoreResult.status === "fulfilled" ? jinaStoreResult.value : [])]
-      .filter((result, position, all) => all.findIndex((item) => item.url === result.url) === position);
+      .filter((result, position, all) => all.findIndex((item) => item.url === result.url) === position)
+      .filter((result) => matchesRequestedProduct(marketQuery, result.title));
     const reviews = [...(reviewResult.status === "fulfilled" ? reviewResult.value : []), ...(jinaReviewResult.status === "fulfilled" ? jinaReviewResult.value : [])]
-      .filter((result, position, all) => all.findIndex((item) => item.url === result.url) === position);
-    candidates = mergeMarketCandidates(query, wbItems, stores, reviews);
+      .filter((result, position, all) => all.findIndex((item) => item.url === result.url) === position)
+      .filter((result) => matchesRequestedProduct(marketQuery, result.title));
+    candidates = mergeMarketCandidates(query, wbItems, stores, reviews)
+      .filter((candidate) => matchesRequestedProduct(marketQuery, candidate.name) && hasVerifiedQuality(candidate));
   }
 
   if (!candidates.length) {
     return Response.json({
-      error: "Не удалось получить подтверждённые карточки из магазинов. Попробуйте уточнить модель, бренд или характеристики.",
+      error: "Не удалось получить подходящие подтверждённые карточки с рейтингом от 4,5 и отзывами. Попробуйте уточнить модель, диагональ или бюджет.",
     }, { status: 502, headers: { "cache-control": "no-store" } });
   }
 
@@ -701,7 +740,9 @@ export async function POST(request: Request) {
     checkedAt,
     summary: intent === "cs2"
       ? "Найдены реальные позиции актуального каталога LIS-SKINS. Для каждой показаны точная карточка и ссылки на профильные CS2-маркеты."
-      : "PricePulse изучил доступные карточки магазинов и обзоры. Цены, оценки и ссылки взяты с найденных страниц, а не созданы из текста запроса.",
+      : ranked.used
+        ? "OpenRouter отфильтровал реальные карточки по смыслу запроса. Аксессуары, товары без отзывов и варианты с рейтингом ниже 4,5 исключены."
+        : "LIVE-поиск проверил реальные карточки магазинов. Аксессуары, товары без отзывов и варианты с рейтингом ниже 4,5 исключены.",
     products,
   }, { headers: { "cache-control": "no-store" } });
 }

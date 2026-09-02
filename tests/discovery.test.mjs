@@ -108,6 +108,63 @@ test("returns real product cards with live price rating reviews and direct sourc
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("filters monitor accessories and low-quality listings before ranking", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.includes("search.wb.ru")) {
+      assert.equal(new URL(url).searchParams.get("query"), "Монитор");
+      return Response.json({ products: [
+        {
+          id: 910000001,
+          name: "Монитор игровой G27i 27 дюймов",
+          brand: "Xiaomi",
+          rating: 4.8,
+          feedbacks: 320,
+          sizes: [{ price: { product: 1999900, total: 1999900 } }],
+        },
+        {
+          id: 910000002,
+          name: "Кабель HDMI для монитора версия 2.0 4K",
+          brand: "APG-T",
+          rating: 5,
+          feedbacks: 5037,
+          sizes: [{ price: { product: 55800, total: 55800 } }],
+        },
+        {
+          id: 910000003,
+          name: "Кронштейн для монитора настольный",
+          brand: "ONKRON",
+          rating: 4.9,
+          feedbacks: 912,
+          sizes: [{ price: { product: 399000, total: 399000 } }],
+        },
+        {
+          id: 910000004,
+          name: "Монитор игровой 24 дюйма",
+          brand: "Unknown",
+          rating: 4.1,
+          feedbacks: 2100,
+          sizes: [{ price: { product: 999000, total: 999000 } }],
+        },
+      ] });
+    }
+    if (url.includes("html.duckduckgo.com")) return new Response("");
+    if (url.includes("s.jina.ai")) return Response.json({ data: [] });
+    throw new Error("Unexpected URL: " + url);
+  };
+  try {
+    const response = await discover({ query: "Монитор в качестве второго", externalSearchConsent: true });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.engine, "live-market");
+    assert.equal(body.products.length, 1);
+    assert.match(body.products[0].name, /Xiaomi.*Монитор/i);
+    assert.match(body.products[0].ratingLabel, /4\.8.*320 отзывов/);
+    assert.doesNotMatch(JSON.stringify(body.products), /Кабель|Кронштейн|Unknown/);
+    assert.match(body.summary, /Аксессуары.*ниже 4,5/);
+  } finally { globalThis.fetch = originalFetch; }
+});
 test("detects CS2 context and returns exact catalogue and Steam item links", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {

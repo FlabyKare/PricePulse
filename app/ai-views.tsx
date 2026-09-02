@@ -141,6 +141,7 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [summary, setSummary] = useState("");
+  const [searchEngine, setSearchEngine] = useState("");
   const [results, setResults] = useState<DiscoveryProduct[]>([]);
   const [selected, setSelected] = useState<DiscoveryProduct | null>(null);
   const [selectedProductId, setSelectedProductId] = useState<number | null>(products[0]?.id ?? null);
@@ -171,7 +172,7 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
     if (!consentGranted) {
       setQuery(finalQuery); setPendingText(finalQuery); setPendingAction("search"); setConsentOpen(true); setError(""); return;
     }
-    setQuery(finalQuery); setLoading(true); setError(""); setResults([]); setSummary(""); setSelected(null);
+    setQuery(finalQuery); setLoading(true); setError(""); setResults([]); setSummary(""); setSearchEngine(""); setSelected(null);
     try {
       const response = await fetch("/api/discover", {
         method: "POST", headers: { "content-type": "application/json" },
@@ -180,7 +181,7 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
       const body = await response.json() as DiscoveryResponse;
       if (!response.ok) throw new Error(body.error || "Не удалось выполнить поиск");
       if (!Array.isArray(body.products) || body.products.length === 0) throw new Error("Магазины не вернули подтверждённые карточки");
-      setResults(body.products); setSummary(body.summary);
+      setResults(body.products); setSummary(body.summary); setSearchEngine(body.engine ?? "live-market");
     } catch (searchError) {
       setError(searchError instanceof Error ? searchError.message : "Не удалось выполнить поиск");
     } finally { setLoading(false); }
@@ -235,9 +236,9 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
         <>
           <div className="discovery-hero">
             <div className="ai-orb">✦</div>
-            <p className="eyebrow">КОНТЕКСТНЫЙ AI-ПОИСК</p>
+            <p className="eyebrow">УМНЫЙ ПОИСК ПО МАГАЗИНАМ</p>
             <h1>Изучим рынок и покажем реальные варианты.</h1>
-            <p className="discovery-lead">Проверим живые карточки, цены, рейтинг и отзывы. Для CS2 используем актуальный каталог LIS-SKINS и точные страницы предметов.</p>
+            <p className="discovery-lead">Проверим живые карточки и покажем только основной товар с рейтингом от 4,5 и отзывами. Аксессуары исключаются, если вы не ищете их явно.</p>
             <form className="discovery-search" role="search" onSubmit={(event) => { event.preventDefault(); void searchProducts(); }}>
               <label className="discovery-query-field" htmlFor="discovery-query-input">
                 <span className="sr-only">Что найти в интернете</span>
@@ -252,7 +253,7 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
 
           <div className="discovery-results-head">
             <div><h2>{results.length ? "Проверенная подборка" : "Начните с запроса"}</h2><p>{summary || "Покажем только найденные карточки товаров с прямыми ссылками — без подстановки запроса в страницы поиска."}</p></div>
-            {results.length > 0 && <span>{results.length} вариантов</span>}
+            {results.length > 0 && <span>{results.length} вариантов · {searchEngine === "openrouter-live-market" ? "AI" : "LIVE"}</span>}
           </div>
           {loading ? (
             <div className="discovery-loading"><span>✦</span><p>Определяем категорию, проверяем профильные каталоги и отзывы…</p></div>
@@ -260,7 +261,7 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
             <div className="discovery-grid">
               {results.map((item, index) => (
                 <button className="discovery-card" key={item.id} onClick={() => setSelected(item)}>
-                  <div className={`discovery-art art-${index % 3}`}><span>{item.name.split(/\s+/).slice(0, 2).map((word) => word[0]).join("").toUpperCase()}</span><i>✦ AI</i></div>
+                  <div className={`discovery-art art-${index % 3}`}><span>{item.name.split(/\s+/).slice(0, 2).map((word) => word[0]).join("").toUpperCase()}</span><i>{searchEngine === "openrouter-live-market" ? "✦ AI" : "● LIVE"}</i></div>
                   <div className="discovery-card-body">
                     <span className="popularity-badge">{item.popularity}</span><h3>{item.name}</h3><p>{item.description}</p>
                     <div className="discovery-meta"><b>{item.priceLabel}</b><span>{item.ratingLabel}</span></div>

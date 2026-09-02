@@ -99,6 +99,8 @@ test("removes the temporary starter preview", async () => {
   assert.match(aiViews, /Разрешить и продолжить/);
   assert.match(aiViews, /pricepulse-external-search-consent/);
   assert.match(aiViews, /AI-КОНСУЛЬТАНТ ПО ПОКУПКЕ/);
+  assert.match(aiViews, /searchEngine === "openrouter-live-market"/);
+  assert.match(aiViews, /● LIVE/);
   assert.match(aiViews, /найденные прямые страницы товаров/);
   assert.match(aiViews, /CS2 ИНВЕСТ-РАДАР/);
   assert.match(aiViews, /offline-cs2-watchlist/);

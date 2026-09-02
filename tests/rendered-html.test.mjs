@@ -35,6 +35,8 @@ test("server-renders the PricePulse product", async () => {
   assert.match(html, /Следи за ценой/);
   assert.match(html, /LIS-SKINS/);
   assert.match(html, /Добавить товар/);
+  assert.doesNotMatch(html, /aria-label="Подборки"/);
+  assert.match(html, /nav-investments-icon/);
   assert.match(html, /summary-loader/);
   assert.doesNotMatch(html, />199(?:\s|&nbsp;)521\s*₽</);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton/);
@@ -60,6 +62,10 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /deleteProduct/);
   assert.match(page, /CollectionDetailsModal/);
   assert.match(page, /onOpen/);
+  assert.doesNotMatch(page, /item: "Подборки"/);
+  assert.match(page, /item: "Главная"[\s\S]+item: "ИИ-поиск"[\s\S]+item: "Добавить"[\s\S]+item: "Инвестиции"[\s\S]+item: "Избранное"/);
+  assert.match(page, /nav-investments-icon/);
+  assert.match(css, /grid-template-columns: repeat\(5, 1fr\)/);
   assert.match(page, /revision: profileRevision\.current/);
   assert.match(page, /response\.status === 409/);
   assert.match(page, /pendingProductDeletions/);

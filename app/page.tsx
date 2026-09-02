@@ -573,11 +573,12 @@ export default function Home() {
         const payload = JSON.parse(decodeURIComponent(window.atob(sharedCode))) as { collection: Collection; products: Product[] };
         setProducts((current) => [...current, ...payload.products.map(normalizeProduct).filter((incoming) => !current.some((item) => item.id === incoming.id))]);
         setCollections((current) => current.some((item) => item.id === payload.collection.id) ? current : [payload.collection, ...current]);
-        setActiveNav("Подборки");
-        setToast(`Подборка «${payload.collection.name}» добавлена`);
+        setSelectedCollection(payload.collection);
+        setActiveNav("Главная");
+        setToast("Товары из общей ссылки добавлены");
         window.history.replaceState(null, "", window.location.pathname);
       } catch {
-        setToast("Не удалось открыть ссылку на подборку");
+        setToast("Не удалось открыть общую ссылку");
       }
     }
 
@@ -647,7 +648,7 @@ export default function Home() {
         setSyncStatus(shouldMigrate ? "saving" : "synced");
         setSyncMessage(shouldMigrate
           ? "Переносим карточки этого устройства в Telegram-профиль…"
-          : "Товары и подборки сохранены в облачном профиле");
+          : "Товары и настройки сохранены в облачном профиле");
       } catch (error) {
         setSyncStatus("error");
         setSyncMessage(error instanceof Error ? error.message : "Не удалось подключить облачную память");
@@ -1038,8 +1039,6 @@ export default function Home() {
         <InvestmentsView />
       ) : activeNav === "Профиль" ? (
         <ProfileView products={products} palette={palette} profile={profile} syncStatus={syncStatus} syncMessage={syncMessage} refreshingPrices={refreshingPrices} currency={currency} ratesReady={rates.USD > 0 && rates.EUR > 0} onCurrency={setCurrency} onRefreshAll={refreshAllPrices} onTheme={() => setThemeOpen(true)} />
-      ) : activeNav === "Подборки" ? (
-        <CollectionsView collections={collections} products={products} onShare={shareCollection} onOpen={setSelectedCollection} onCreate={() => setCollectionOpen(true)} />
       ) : (
         <>
           <section className="welcome-row">
@@ -1126,15 +1125,21 @@ export default function Home() {
 
       <nav className="bottom-nav" aria-label="Основная навигация">
         {[
-          ["Главная", "⌂"],
-          ["Подборки", "▦"],
-          ["Добавить", "+"],
-          ["ИИ-поиск", "✦"],
-          ["Инвестиции", "↗"],
-          ["Избранное", "♡"],
-        ].map(([item, icon]) => (
+          { item: "Главная", icon: "⌂" },
+          { item: "ИИ-поиск", icon: "✦" },
+          { item: "Добавить", icon: "+" },
+          { item: "Инвестиции", icon: null },
+          { item: "Избранное", icon: "♡" },
+        ].map(({ item, icon }) => (
           <button key={item} className={`${activeNav === item ? "current" : ""} ${item === "Добавить" ? "nav-add" : ""}`} onClick={() => changeNav(item)} aria-label={item}>
-            <span>{icon}</span><small>{item}</small>
+            <span className={item === "Инвестиции" ? "nav-investments-icon" : undefined}>
+              {item === "Инвестиции" ? (
+                <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                  <path d="M7 17 17 7M9 7h8v8" />
+                </svg>
+              ) : icon}
+            </span>
+            <small>{item}</small>
           </button>
         ))}
       </nav>
@@ -1798,7 +1803,7 @@ function ProfileView({
         </button>
         <div className="idea-row enabled"><span>↯</span><p><b>Сравнение магазинов</b><small>Добавляйте предложения прямо в карточке</small></p><i>✓</i></div>
         <div className="idea-row enabled"><span>↘</span><p><b>Прогноз выгодной цены</b><small>Рекомендация на основе истории и тренда</small></p><i>✓</i></div>
-        <div className="idea-row enabled"><span>⇧</span><p><b>Общие подборки</b><small>Сохраняются отдельно в каждом Telegram-профиле</small></p><i>✓</i></div>
+
         <div className="idea-row enabled"><span>✦</span><p><b>OpenRouter-ready</b><small>Автоматически включится после добавления серверного API-ключа</small></p><i>✓</i></div>
       </div>
     </section>

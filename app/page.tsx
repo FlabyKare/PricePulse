@@ -1,9 +1,10 @@
 "use client";
 
-import type { CSSProperties } from "react";
+import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { createContext, FormEvent, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { isLisSkinsUrl } from "@/lib/lis-skins";
 import { mergeProfileRecords } from "@/lib/profile-state";
+import { shouldDismissSheetDrag } from "@/lib/sheet-gesture";
 import { InvestmentsView, SmartDiscoveryView } from "./ai-views";
 
 type Offer = {
@@ -1426,8 +1427,55 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAle
   const [alertMode, setAlertMode] = useState<PriceAlertSettings["mode"]>(product.alertMode === "percent" ? "percent" : "amount");
   const [alertInput, setAlertInput] = useState(product.alertThreshold ? String(product.alertThreshold) : "");
   const [alertError, setAlertError] = useState("");
+  const [sheetDragY, setSheetDragY] = useState(0);
+  const [sheetDragging, setSheetDragging] = useState(false);
+  const [sheetDismissing, setSheetDismissing] = useState(false);
+  const sheetDrag = useRef<{ pointerId: number; startY: number; startedAt: number } | null>(null);
+  const sheetCloseTimer = useRef<number | null>(null);
   const forecast = forecastFor(product);
   const offers = [...(product.offers ?? [])].sort((a, b) => a.price - b.price);
+
+  useEffect(() => () => {
+    if (sheetCloseTimer.current !== null) window.clearTimeout(sheetCloseTimer.current);
+  }, []);
+
+  function startSheetDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    sheetDrag.current = { pointerId: event.pointerId, startY: event.clientY, startedAt: event.timeStamp };
+    setSheetDragging(true);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveSheetDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = sheetDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    setSheetDragY(Math.max(0, event.clientY - drag.startY));
+  }
+
+  function finishSheetDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = sheetDrag.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const distance = Math.max(0, event.clientY - drag.startY);
+    const elapsed = Math.max(1, event.timeStamp - drag.startedAt);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    sheetDrag.current = null;
+    setSheetDragging(false);
+    if (shouldDismissSheetDrag(distance, elapsed)) {
+      setSheetDismissing(true);
+      setSheetDragY(Math.max(window.innerHeight, distance + 160));
+      haptic("medium");
+      sheetCloseTimer.current = window.setTimeout(onClose, 180);
+      return;
+    }
+    setSheetDragY(0);
+  }
+
+  function cancelSheetDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (sheetDrag.current?.pointerId !== event.pointerId) return;
+    sheetDrag.current = null;
+    setSheetDragging(false);
+    setSheetDragY(0);
+  }
 
   function saveAlert(event: FormEvent) {
     event.preventDefault();
@@ -1455,8 +1503,10 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAle
 
   return (
     <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
-      <section className="modal details-modal" role="dialog" aria-modal="true" aria-labelledby="detail-title">
-        <div className="modal-handle" />
+      <section className={"modal details-modal" + (sheetDragging ? " is-dragging" : "") + (sheetDismissing ? " is-dismissing" : "")} style={{ "--sheet-drag-y": sheetDragY + "px" } as CSSProperties} role="dialog" aria-modal="true" aria-labelledby="detail-title">
+        <div className="modal-drag-zone" onPointerDown={startSheetDrag} onPointerMove={moveSheetDrag} onPointerUp={finishSheetDrag} onPointerCancel={cancelSheetDrag}>
+          <div className="modal-handle" />
+        </div>
         <button className="modal-close" onClick={onClose} aria-label="Закрыть">×</button>
         <div className="details-head">
           <div className={`detail-art ${product.artClass} ${product.imageUrl ? "has-preview" : ""}`}>
@@ -1563,7 +1613,7 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAle
               <span className="offer-rank">{index + 1}</span>
               <span><b>{offer.store}</b><small>{offer.note}</small></span>
               <span className="offer-price"><b>{formatPrice(offer.price)}</b>{index === 0 && <small>Лучшая цена</small>}</span>
-              <span>↗</span>
+              <span className="offer-link-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8" /></svg></span>
             </button>
           ))}
         </div>
@@ -1579,7 +1629,7 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAle
           {[1, 3, 6, 12, 24].map((hours) => <button key={hours} className={product.period === hours ? "picked" : ""} onClick={() => onPeriod(product.id, hours)}>{hours === 24 ? "1 день" : `${hours} ч`}</button>)}
         </div>
         <div className="detail-actions">
-          <button className="secondary-button" onClick={() => window.open(product.url, "_blank", "noopener,noreferrer")}>Открыть магазин ↗</button>
+          <button className="secondary-button store-link-button" onClick={() => window.open(product.url, "_blank", "noopener,noreferrer")}><span>Открыть магазин</span><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8" /></svg></button>
           <button className="primary-button" onClick={() => onCheck(product.id)}>Проверить сейчас</button>
         </div>
         <button className="delete-product-button" onClick={() => onDelete(product.id)}>⌫ Удалить карточку</button>

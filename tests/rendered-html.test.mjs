@@ -66,6 +66,11 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /item: "Главная"[\s\S]+item: "ИИ-поиск"[\s\S]+item: "Добавить"[\s\S]+item: "Инвестиции"[\s\S]+item: "Избранное"/);
   assert.match(page, /nav-investments-icon/);
   assert.match(css, /grid-template-columns: repeat\(5, 1fr\)/);
+  assert.match(page, /onPointerDown={startSheetDrag}/);
+  assert.match(page, /shouldDismissSheetDrag/);
+  assert.match(page, /offer-link-icon/);
+  assert.match(page, /store-link-button/);
+  assert.match(css, /\.details-modal \.modal-drag-zone[^}]*touch-action:\s*none/s);
   assert.match(page, /revision: profileRevision\.current/);
   assert.match(page, /response\.status === 409/);
   assert.match(page, /pendingProductDeletions/);

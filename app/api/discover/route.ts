@@ -1,3 +1,6 @@
+import { requirePrivateTelegramAccess } from "@/lib/private-access";
+import { containsSensitiveIdentifier } from "@/lib/privacy";
+
 type RuntimeEnv = { OPENROUTER_API_KEY?: string; OPENROUTER_MODEL?: string; WEBAPP_URL?: string };
 type SearchIntent = "cs2" | "electronics" | "beauty" | "fashion" | "home" | "auto" | "general";
 type Source = {
@@ -606,6 +609,7 @@ async function rankWithOpenRouter(query: string, candidates: Candidate[]) {
         model: runtime.OPENROUTER_MODEL?.trim() || "openai/gpt-4o-mini",
         temperature: 0.1,
         max_tokens: 350,
+        provider: { zdr: true, data_collection: "deny", allow_fallbacks: false },
         response_format: { type: "json_object" },
         messages: [
           {
@@ -683,6 +687,8 @@ function publicCandidate(candidate: Candidate) {
 }
 
 export async function POST(request: Request) {
+  const accessDenied = await requirePrivateTelegramAccess(request);
+  if (accessDenied) return accessDenied;
   let body: { query?: unknown; externalSearchConsent?: unknown };
   try {
     body = await request.json() as typeof body;
@@ -696,8 +702,8 @@ export async function POST(request: Request) {
   if (query.length < 2 || query.length > 120) {
     return Response.json({ error: "Запрос должен содержать от 2 до 120 символов" }, { status: 400 });
   }
-  if (/@|(?:\+?\d[\s()-]*){10,}/.test(query)) {
-    return Response.json({ error: "Не добавляйте в поисковый запрос телефон или e-mail" }, { status: 400 });
+  if (containsSensitiveIdentifier(query)) {
+    return Response.json({ error: "Не добавляйте в поисковый запрос телефон, e-mail, реквизиты или номер документа" }, { status: 400 });
   }
 
   const intent = inferIntent(query);

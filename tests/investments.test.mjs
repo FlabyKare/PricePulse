@@ -34,7 +34,7 @@ test("ranks concrete CS2 items with live price context and risks", async () => {
     const worker = await loadWorker();
     const response = await worker.fetch(
       new Request("http://localhost/api/cs2-investments"),
-      { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
+      { PRICEPULSE_ACCESS_MODE: "public", ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
       { waitUntil() {}, passThroughOnException() {} },
     );
     const body = await response.json();

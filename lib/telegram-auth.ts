@@ -6,6 +6,17 @@ type RuntimeEnv = {
   TELEGRAM_BOT_ID?: string;
 };
 
+function allowedTelegramIds() {
+  return new Set((process.env.ALLOWED_TELEGRAM_USER_IDS ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => /^\d+$/.test(value)));
+}
+
+export function privateAccessEnabled() {
+  return process.env.PRICEPULSE_ACCESS_MODE?.trim().toLocaleLowerCase("en") !== "public";
+}
+
 export async function authenticateTelegramRequest(request: Request) {
   const runtime = env as unknown as RuntimeEnv;
   const botToken = runtime.BOT_TOKEN?.trim() || null;
@@ -38,6 +49,16 @@ export async function authenticateTelegramRequest(request: Request) {
       response: Response.json(
         { error: "Сессия Telegram устарела. Закройте и снова откройте мини-приложение", code: "telegram_auth_invalid" },
         { status: 401 },
+      ),
+    };
+  }
+
+  if (privateAccessEnabled() && !allowedTelegramIds().has(user.id)) {
+    return {
+      user: null,
+      response: Response.json(
+        { error: "PricePulse работает в закрытом персональном режиме", code: "private_access_required" },
+        { status: 403 },
       ),
     };
   }

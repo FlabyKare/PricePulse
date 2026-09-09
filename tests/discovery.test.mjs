@@ -8,7 +8,7 @@ async function loadWorker() {
   return (await import(url.href)).default;
 }
 
-const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
+const env = { PRICEPULSE_ACCESS_MODE: "public", ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
 const context = { waitUntil() {}, passThroughOnException() {} };
 
 async function discover(body) {
@@ -44,7 +44,7 @@ test("rejects contact details in external search queries", async () => {
   try {
     const response = await discover({ query: "найди товар test@example.com", externalSearchConsent: true });
     assert.equal(response.status, 400);
-    assert.match((await response.json()).error, /телефон или e-mail/);
+    assert.match((await response.json()).error, /телефон.*e-mail/);
   } finally { globalThis.fetch = originalFetch; }
 });
 

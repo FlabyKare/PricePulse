@@ -11,7 +11,7 @@ import {
   type MonitoredProduct,
 } from "@/lib/price-monitor";
 
-type RuntimeEnv = { BOT_TOKEN?: string; TELEGRAM_BOT_ID?: string };
+type RuntimeEnv = { BOT_TOKEN?: string; TELEGRAM_BOT_ID?: string; PRICEPULSE_ACCESS_MODE?: string; ALLOWED_TELEGRAM_USER_IDS?: string };
 
 const MAX_PROFILES_PER_RUN = 25;
 const MAX_CHECKS_PER_RUN = 12;
@@ -157,7 +157,11 @@ export async function POST(request: Request) {
   if (!token) return Response.json({ error: "Недостаточно прав" }, { status: 401 });
 
   const db = getDb();
-  const profiles = await db.select().from(profileStates).limit(MAX_PROFILES_PER_RUN);
+  const allowedIds = new Set((runtime.ALLOWED_TELEGRAM_USER_IDS ?? "").split(",").map((value) => value.trim()).filter(Boolean));
+  const selectedProfiles = await db.select().from(profileStates).limit(MAX_PROFILES_PER_RUN);
+  const profiles = runtime.PRICEPULSE_ACCESS_MODE?.trim().toLocaleLowerCase("en") === "private"
+    ? selectedProfiles.filter((profile) => allowedIds.has(profile.userId))
+    : selectedProfiles;
   const webAppUrl = new URL(request.url).origin;
   const now = Date.now();
   const capturedAt = new Date(now).toISOString();

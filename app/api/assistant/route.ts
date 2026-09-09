@@ -1,3 +1,6 @@
+import { requirePrivateTelegramAccess } from "@/lib/private-access";
+import { containsSensitiveIdentifier } from "@/lib/privacy";
+
 type AssistantMessage = { role: "user" | "assistant"; content: string };
 type OfferContext = { store?: unknown; price?: unknown; url?: unknown };
 type ProductContext = {
@@ -94,9 +97,10 @@ async function openRouterAnswer(question: string, product: ReturnType<typeof nor
         "x-openrouter-title": "PricePulse Assistant",
       },
       body: JSON.stringify({
-        model: runtime.OPENROUTER_MODEL?.trim() || "openrouter/auto",
+        model: runtime.OPENROUTER_MODEL?.trim() || "openai/gpt-4o-mini",
         temperature: 0.25,
         max_tokens: 900,
+        provider: { zdr: true, data_collection: "deny", allow_fallbacks: false },
         messages: [
           {
             role: "system",
@@ -136,12 +140,14 @@ function fallbackAnswer(question: string, product: ReturnType<typeof normalizedP
 }
 
 export async function POST(request: Request) {
+  const accessDenied = await requirePrivateTelegramAccess(request);
+  if (accessDenied) return accessDenied;
   let body: { question?: unknown; product?: unknown; history?: unknown; externalSearchConsent?: unknown };
   try { body = await request.json() as typeof body; } catch { return Response.json({ error: "Задайте вопрос ассистенту" }, { status: 400 }); }
   if (body.externalSearchConsent !== true) return Response.json({ error: "Подтвердите передачу текста вопроса внешнему AI-сервису" }, { status: 400 });
   const question = typeof body.question === "string" ? clean(body.question, 600) : "";
   if (question.length < 2) return Response.json({ error: "Вопрос должен содержать хотя бы 2 символа" }, { status: 400 });
-  if (/@|(?:\+?\d[\s()-]*){10,}/.test(question)) return Response.json({ error: "Не добавляйте во вопрос телефон или e-mail" }, { status: 400 });
+  if (containsSensitiveIdentifier(question)) return Response.json({ error: "Не добавляйте во вопрос телефон, e-mail, реквизиты или номер документа" }, { status: 400 });
   const product = normalizedProduct(body.product && typeof body.product === "object" ? body.product as ProductContext : {});
   const history: AssistantMessage[] = Array.isArray(body.history) ? body.history.flatMap((entry) => {
     if (!entry || typeof entry !== "object") return [];

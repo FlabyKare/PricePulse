@@ -1,3 +1,5 @@
+import { requirePrivateTelegramAccess } from "@/lib/private-access";
+
 import {
   findLisSkinsItem,
   getLisSkinsSlug,
@@ -275,6 +277,8 @@ async function getUsdRubRate() {
 }
 
 export async function POST(request: Request) {
+  const accessDenied = await requirePrivateTelegramAccess(request);
+  if (accessDenied) return accessDenied;
   let body: { url?: unknown; name?: unknown };
   try { body = await request.json() as typeof body; }
   catch { return Response.json({ error: "Передайте ссылку на товар" }, { status: 400 }); }

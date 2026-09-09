@@ -61,6 +61,7 @@ type InvestmentsResponse = {
 };
 
 const consentStorageKey = "pricepulse-external-search-consent";
+const cs2AgeStorageKey = "pricepulse-cs2-age-confirmed";
 
 
 function fallbackInvestments(): InvestmentsResponse {
@@ -130,11 +131,12 @@ function fallbackInvestments(): InvestmentsResponse {
   };
 }
 
-export function SmartDiscoveryView({ products }: { products: ProductContext[] }) {
+export function SmartDiscoveryView({ products, initData }: { products: ProductContext[]; initData: string }) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [mode, setMode] = useState<"search" | "assistant">("search");
   const [query, setQuery] = useState("");
   const [consent, setConsent] = useState(false);
+  const [rememberConsent, setRememberConsent] = useState(false);
   const [consentOpen, setConsentOpen] = useState(false);
   const [pendingText, setPendingText] = useState("");
   const [pendingAction, setPendingAction] = useState<"search" | "assistant">("search");
@@ -175,7 +177,7 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
     setQuery(finalQuery); setLoading(true); setError(""); setResults([]); setSummary(""); setSearchEngine(""); setSelected(null);
     try {
       const response = await fetch("/api/discover", {
-        method: "POST", headers: { "content-type": "application/json" },
+        method: "POST", headers: { "content-type": "application/json", ...(initData ? { "x-telegram-init-data": initData } : {}) },
         body: JSON.stringify({ query: finalQuery, externalSearchConsent: true }),
       });
       const body = await response.json() as DiscoveryResponse;
@@ -199,7 +201,7 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
     setAssistantQuestion(""); setAssistantLoading(true); setError("");
     try {
       const response = await fetch("/api/assistant", {
-        method: "POST", headers: { "content-type": "application/json" },
+        method: "POST", headers: { "content-type": "application/json", ...(initData ? { "x-telegram-init-data": initData } : {}) },
         body: JSON.stringify({
           question,
           product: selectedProduct,
@@ -219,11 +221,13 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
   function approveExternalAccess() {
     const queuedText = pendingText.trim();
     setConsent(true);
-    window.localStorage.setItem(consentStorageKey, "true");
+    if (rememberConsent) window.localStorage.setItem(consentStorageKey, "true");
+    else window.localStorage.removeItem(consentStorageKey);
     setConsentOpen(false); setPendingText("");
     if (pendingAction === "assistant") void askAssistant(queuedText, true);
     else void searchProducts(queuedText, true);
   }
+
 
   return (
     <section className="discovery-view">
@@ -246,7 +250,7 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
               </label>
               <button type="submit" disabled={loading}>{loading ? "Ищем…" : "Найти"} <span>→</span></button>
             </form>
-            <p className="search-privacy-note" id="discovery-search-help"><span>✓</span> Первый поиск попросит разрешение передать только текст запроса. Профиль и карточки не отправляются.</p>
+            <p className="search-privacy-note" id="discovery-search-help"><span>✓</span> Перед внешним поиском PricePulse покажет, какие данные будут отправлены. Согласие можно дать один раз или запомнить на устройстве.</p>
             <div className="prompt-chips">{prompts.map((prompt) => <button type="button" key={prompt} onClick={() => { setQuery(prompt); void searchProducts(prompt); }}>{prompt}</button>)}</div>
             {error && <p className="discovery-error" role="alert">{error}</p>}
           </div>
@@ -278,9 +282,9 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
             <p className="eyebrow">AI-КОНСУЛЬТАНТ ПО ПОКУПКЕ</p>
             <h1>Советуйтесь до того, как нажать «купить».</h1>
             <p>Ассистент учитывает карточку, динамику цены и предложения, а затем показывает источники для проверки.</p>
-            <label>Товар для обсуждения</label>
+            <label htmlFor="assistant-product">Товар для обсуждения</label>
             {products.length ? (
-              <select value={selectedProduct?.id ?? ""} onChange={(event) => setSelectedProductId(Number(event.target.value))}>
+              <select id="assistant-product" value={selectedProduct?.id ?? ""} onChange={(event) => setSelectedProductId(Number(event.target.value))}>
                 {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
               </select>
             ) : <div className="assistant-no-product">Добавьте товар в мониторинг или опишите его прямо в вопросе.</div>}
@@ -314,20 +318,22 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
       )}
 
       {consentOpen && (
-        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setConsentOpen(false)}>
+        <div role="presentation" className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setConsentOpen(false)}>
           <section className="modal search-consent-modal" role="dialog" aria-modal="true" aria-labelledby="search-consent-title">
             <div className="modal-handle" /><button className="modal-close" onClick={() => setConsentOpen(false)} aria-label="Закрыть">×</button>
             <div className="modal-kicker"><span>✦</span> РАЗРЕШЕНИЕ НА AI</div>
-            <h2 id="search-consent-title">Передать только текст запроса?</h2>
-            <p className="modal-lead">PricePulse отправит текст сервисам поиска и OpenRouter, если он подключён. Данные Telegram, карточки и избранное не передаются.</p>
-            <div className="consent-points"><p><span>✓</span><b>Отправится:</b> «{pendingText}»</p><p><span>×</span><b>Не отправятся:</b> профиль Telegram, карточки и избранное</p></div>
+            <h2 id="search-consent-title">Разрешить внешнюю обработку?</h2>
+            <p className="modal-lead">{pendingAction === "assistant" ? "В OpenRouter будут переданы вопрос, выбранная карточка товара, сохранённые предложения и последние сообщения диалога. Для проверки фактов текст также используется во внешнем поиске." : "Текст запроса будет передан сервисам поиска. Найденные карточки без данных Telegram могут быть переданы OpenRouter только для смысловой фильтрации."}</p>
+            <div className="consent-points"><p><span>✓</span><b>Запрос:</b> «{pendingText}»</p><p><span>×</span><b>Не отправятся:</b> Telegram ID, имя, username, избранное и другие карточки профиля</p></div>
+            <label className="consent-remember"><input type="checkbox" checked={rememberConsent} onChange={(event) => setRememberConsent(event.target.checked)} /><span>Запомнить согласие на этом устройстве. Его можно отозвать в профиле.</span></label>
+            <p className="consent-memory">OpenRouter запрашивается в режиме без хранения и без передачи провайдерам, собирающим данные. Внешние сайты работают по собственным правилам. Не вводите телефон, e-mail, платёжные и паспортные данные.</p>
             <div className="consent-actions"><button type="button" className="primary-button" onClick={approveExternalAccess}>Разрешить и продолжить <span>→</span></button><button type="button" className="secondary-button" onClick={() => { setConsentOpen(false); setPendingText(""); }}>Отмена</button></div>
           </section>
         </div>
       )}
 
       {selected && (
-        <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSelected(null)}>
+        <div role="presentation" className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setSelected(null)}>
           <section className="modal discovery-modal" role="dialog" aria-modal="true" aria-labelledby="discovery-title">
             <div className="modal-handle" /><button className="modal-close" onClick={() => setSelected(null)} aria-label="Закрыть">×</button>
             <div className="modal-kicker"><span>✦</span> ПРОФИЛЬНЫЕ ИСТОЧНИКИ</div><h2 id="discovery-title">{selected.name}</h2><p className="modal-lead">{selected.description}</p>
@@ -340,18 +346,19 @@ export function SmartDiscoveryView({ products }: { products: ProductContext[] })
   );
 }
 
-export function InvestmentsView() {
+export function InvestmentsView({ initData }: { initData: string }) {
   const [data, setData] = useState<InvestmentsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [filter, setFilter] = useState<"Все" | "Скины" | "Наклейки" | "Кейсы и капсулы">("Все");
+  const [ageConfirmed, setAgeConfirmed] = useState(false);
 
   async function refresh() {
     setLoading(true); setError("");
     try {
-      const response = await fetch("/api/cs2-investments", { cache: "no-store" });
+      const response = await fetch("/api/cs2-investments", { cache: "no-store", headers: initData ? { "x-telegram-init-data": initData } : {} });
       const body = await response.json() as InvestmentsResponse;
-      if (!response.ok) throw new Error(body.error || "Не удалось обновить CS2-радар");
+      if (!response.ok) throw new Error(body.error || "Не удалось обновить данные CS2");
       setData(body.ideas?.length ? body : fallbackInvestments());
     } catch {
       setData(fallbackInvestments());
@@ -359,7 +366,16 @@ export function InvestmentsView() {
     } finally { setLoading(false); }
   }
 
-  useEffect(() => { void refresh(); }, []);
+  useEffect(() => {
+    const confirmed = window.localStorage.getItem(cs2AgeStorageKey) === "true";
+    const timeout = window.setTimeout(() => {
+      setAgeConfirmed(confirmed);
+      if (confirmed) void refresh();
+    }, 0);
+    return () => window.clearTimeout(timeout);
+    // refresh is intentionally sampled once after reading the local age confirmation.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const visibleIdeas = useMemo(() => {
     const ideas = data?.ideas ?? [];
@@ -376,15 +392,29 @@ export function InvestmentsView() {
     return data?.sources.find((source) => source.url === url)?.publisher || "Источник";
   }
 
+  if (!ageConfirmed) {
+    return (
+      <section className="investments-view">
+        <div className="age-gate">
+          <p className="eyebrow">РАЗДЕЛ 18+</p>
+          <h1>Аналитика рынка предметов CS2</h1>
+          <p>Это справочная аналитика виртуальных игровых предметов, а не финансовая или индивидуальная инвестиционная рекомендация. Предметы могут резко потерять стоимость, а продажа сопровождается комиссиями и ограничениями площадок.</p>
+          <button type="button" className="primary-button" onClick={() => { window.localStorage.setItem(cs2AgeStorageKey, "true"); setAgeConfirmed(true); void refresh(); }}>Мне исполнилось 18 лет <span>→</span></button>
+          <a href="/legal">О рисках и правилах использования</a>
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="investments-view">
       <div className="investments-hero cs2-investments-hero">
         <div>
-          <p className="eyebrow">CS2 ИНВЕСТ-РАДАР</p>
-          <h1>Конкретные предметы с потенциалом — и причины, почему.</h1>
+          <p className="eyebrow">АНАЛИТИКА РЫНКА CS2</p>
+          <h1>Предметы для самостоятельного наблюдения и проверки.</h1>
           <p>PricePulse проверяет живые цены LIS-SKINS, доступное предложение и собственную историю. В списке — скины, наклейки и кейсы, а не абстрактные «рыночные темы».</p>
         </div>
-        <button onClick={() => void refresh()} disabled={loading}>{loading ? "Считаем…" : "Обновить радар"} <span>↻</span></button>
+        <button onClick={() => void refresh()} disabled={loading}>{loading ? "Считаем…" : "Обновить данные"} <span>↻</span></button>
       </div>
       <div className="investment-warning"><span>!</span><p><b>Это оценка потенциала, не обещание роста.</b> Рынок предметов CS2 волатилен. Учитывайте комиссии, ликвидность, блокировку обмена и риск полной потери вложений.</p></div>
       {error && <p className="investment-error" role="alert">{error}</p>}
@@ -408,8 +438,8 @@ export function InvestmentsView() {
                   <div><small>Динамика 30 дней</small><b className={idea.momentum30d === null ? "" : idea.momentum30d >= 0 ? "positive" : "negative"}>{idea.momentum30d === null ? "копим историю" : `${idea.momentum30d > 0 ? "+" : ""}${idea.momentum30d}%`}</b></div>
                 </div>
                 <div className="cs2-score">
-                  <div><span>Потенциал</span><b>{idea.potentialScore}/100</b></div>
-                  <div className="cs2-score-track" aria-label={`Оценка потенциала ${idea.potentialScore} из 100`}><span style={{ width: `${idea.potentialScore}%` }} /></div>
+                  <div><span>Оценка факторов</span><b>{idea.potentialScore}/100</b></div>
+                  <div className="cs2-score-track" aria-label={`Оценка факторов ${idea.potentialScore} из 100`}><span style={{ width: `${idea.potentialScore}%` }} /></div>
                   <p>{idea.scoreLabel} · {idea.confidence}</p>
                 </div>
                 <div className="cs2-reasons"><b>Почему в списке</b><ul>{idea.reasons.map((reason) => <li key={reason}>{reason}</li>)}</ul></div>
@@ -418,7 +448,7 @@ export function InvestmentsView() {
               </article>
             ))}
           </div>
-          {!visibleIdeas.length && <div className="discovery-empty"><span>⌁</span><h3>Пока нет предметов этого типа</h3><p>Обновите радар — список зависит от текущего каталога и ликвидности.</p></div>}
+          {!visibleIdeas.length && <div className="discovery-empty"><span>⌁</span><h3>Пока нет предметов этого типа</h3><p>Обновите данные — список зависит от текущего каталога и ликвидности.</p></div>}
           <section className="cs2-methodology"><p className="eyebrow">КАК СЧИТАЕТСЯ ОЦЕНКА</p><h2>Баллы — это фильтр, а не вероятность роста.</h2><p>{data?.methodology}</p></section>
           <section className="market-sources"><div><p className="eyebrow">ПУБЛИЧНЫЕ ИСТОЧНИКИ</p><h2>Где проверить каждый тезис</h2></div><div>{data?.sources.slice(0, 8).map((source) => <a key={source.url} href={source.url} target="_blank" rel="noopener noreferrer"><small>{source.publisher}</small><b>{source.title}</b><span>↗</span></a>)}</div></section>
           {data?.disclaimer && <p className="investment-disclaimer">{data.disclaimer}</p>}

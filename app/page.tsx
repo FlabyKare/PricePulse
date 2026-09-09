@@ -120,6 +120,9 @@ type ProfileApiResponse = {
 
 type ProfileSyncStatus = "local" | "loading" | "saving" | "synced" | "error";
 
+const PROFILE_CONSENT_KEY = "pricepulse-profile-consent-v1";
+const AI_CONSENT_KEY = "pricepulse-external-search-consent";
+
 type LegacyLocalState = {
   products: Product[] | null;
   collections: Collection[] | null;
@@ -396,10 +399,18 @@ function normalizeProduct(product: Product): Product {
   };
 }
 
+function telegramApiHeaders(json = false) {
+  const initData = (window as TelegramWindow).Telegram?.WebApp?.initData?.trim() ?? "";
+  return {
+    ...(json ? { "content-type": "application/json" } : {}),
+    ...(initData ? { "x-telegram-init-data": initData } : {}),
+  };
+}
+
 async function resolveLisProduct(url: string) {
   const response = await fetch("/api/products/resolve", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: telegramApiHeaders(true),
     body: JSON.stringify({ url }),
   });
   const result = await response.json() as ResolvedLisProduct & { error?: string };
@@ -410,7 +421,7 @@ async function resolveLisProduct(url: string) {
 async function resolveStoreProduct(url: string, name = "") {
   const response = await fetch("/api/products/resolve", {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: telegramApiHeaders(true),
     body: JSON.stringify({ url, name }),
   });
   const result = await response.json() as ResolvedStoreProduct & { error?: string };
@@ -512,6 +523,9 @@ export default function Home() {
   const [profile, setProfile] = useState<TelegramProfile | null>(null);
   const [syncStatus, setSyncStatus] = useState<ProfileSyncStatus>("loading");
   const [syncMessage, setSyncMessage] = useState("Подключаем Telegram-профиль…");
+  const [profileConsentOpen, setProfileConsentOpen] = useState(false);
+  const [accessBlocked, setAccessBlocked] = useState(false);
+  const [telegramInitDataValue, setTelegramInitDataValue] = useState("");
   const automaticRefreshStarted = useRef(false);
   const telegramInitData = useRef("");
   const profileRevision = useRef<number | null>(null);
@@ -528,6 +542,7 @@ export default function Home() {
     telegram?.disableVerticalSwipes?.();
     const initData = telegram?.initData?.trim() ?? "";
     telegramInitData.current = initData;
+    window.queueMicrotask(() => setTelegramInitDataValue(initData));
 
     const readStoredJson = <T,>(key: string): T | null => {
       const saved = window.localStorage.getItem(key);
@@ -600,8 +615,23 @@ export default function Home() {
     setLoaded(true);
 
     if (!initData) {
-      setSyncStatus("local");
-      setSyncMessage("");
+      const localHost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+      if (!localHost) {
+        setAccessBlocked(true);
+        setSyncStatus("error");
+        setSyncMessage("Откройте закрытое приложение через Telegram-бота");
+      } else {
+        setSyncStatus("local");
+        setSyncMessage("");
+      }
+      setCatalogReady(true);
+      return;
+    }
+
+    if (window.localStorage.getItem(PROFILE_CONSENT_KEY) !== "accepted") {
+      setProfileConsentOpen(true);
+      setSyncStatus("loading");
+      setSyncMessage("Нужно согласие на синхронизацию по Telegram ID");
       setCatalogReady(true);
       return;
     }
@@ -609,10 +639,11 @@ export default function Home() {
     void (async () => {
       try {
         const response = await fetch("/api/profile", {
-          headers: { "x-telegram-init-data": initData },
+          headers: { "x-telegram-init-data": initData, "x-pricepulse-profile-consent": "accepted" },
           cache: "no-store",
         });
         const body = await response.json() as ProfileApiResponse;
+        if (response.status === 403) setAccessBlocked(true);
         if (!response.ok || !body.profile) throw new Error(body.error || "Не удалось войти через Telegram");
         setProfile((current) => {
           const mergedProfile: TelegramProfile = {
@@ -722,6 +753,7 @@ export default function Home() {
             headers: {
               "content-type": "application/json",
               "x-telegram-init-data": telegramInitData.current,
+              "x-pricepulse-profile-consent": "accepted",
             },
             body: JSON.stringify({ products, collections, palette, currency, revision: profileRevision.current, deletedProductIds }),
             keepalive: true,
@@ -776,7 +808,7 @@ export default function Home() {
       remoteFetchInFlight.current = true;
       try {
         const response = await fetch("/api/profile", {
-          headers: { "x-telegram-init-data": telegramInitData.current },
+          headers: { "x-telegram-init-data": telegramInitData.current, "x-pricepulse-profile-consent": "accepted" },
           cache: "no-store",
         });
         const body = await response.json() as ProfileApiResponse;
@@ -836,7 +868,7 @@ export default function Home() {
   const formatPrice = (value: number) => formatPriceValue(value, currency, rates);
   const totalValue = products.reduce((sum, product) => sum + product.price, 0);
   const favoriteCount = products.filter((product) => product.favorite).length;
-  const summaryUnavailable = catalogReady && syncStatus === "error" && Boolean(telegramInitData.current);
+  const summaryUnavailable = catalogReady && syncStatus === "error" && Boolean(telegramInitDataValue);
   const displayName = profile?.firstName || "друг";
   const avatarLetter = displayName.slice(0, 1).toLocaleUpperCase("ru");
   const themeStyle = {
@@ -982,6 +1014,37 @@ export default function Home() {
       setToast(error instanceof Error ? error.message : "Не удалось добавить магазин");
     }
   }
+  function exportProfileData() {
+    const payload = { exportedAt: new Date().toISOString(), telegramId: profile?.id ?? null, products, palette, currency };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `pricepulse-export-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setToast("Экспорт профиля сохранён");
+  }
+
+  async function deleteProfileData() {
+    if (!window.confirm("Безвозвратно удалить все карточки и настройки PricePulse из облачного профиля?")) return;
+    try {
+      const response = await fetch("/api/profile", { method: "DELETE", headers: telegramApiHeaders() });
+      const body = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(body.error || "Не удалось удалить профиль");
+      ["pricepulse-products", "pricepulse-collections", "pricepulse-palette", "pricepulse-currency", "pricepulse-telegram-profile", PROFILE_CONSENT_KEY, AI_CONSENT_KEY]
+        .forEach((key) => window.localStorage.removeItem(key));
+      window.location.reload();
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "Не удалось удалить профиль");
+    }
+  }
+
+  function revokeAiConsent() {
+    window.localStorage.removeItem(AI_CONSENT_KEY);
+    setToast("Постоянное согласие на внешние AI-сервисы отозвано");
+  }
+
   async function shareCollection(collection: Collection) {
     const collectionProducts = products.filter((product) => collection.productIds.includes(product.id));
     const code = window.btoa(encodeURIComponent(JSON.stringify({ collection, products: collectionProducts })));
@@ -998,6 +1061,20 @@ export default function Home() {
       setToast("Отправка отменена");
     }
     haptic();
+  }
+
+  if (accessBlocked) {
+    return (
+      <main className="access-screen" style={themeStyle}>
+        <section className="access-card">
+          <span className="brand-mark">P<span /></span>
+          <p className="eyebrow">ЗАКРЫТЫЙ ПЕРСОНАЛЬНЫЙ РЕЖИМ</p>
+          <h1>Доступ только из разрешённого Telegram-профиля</h1>
+          <p>PricePulse не является публичным сервисом. Откройте мини-приложение через @price_pulce_bot с аккаунта, добавленного владельцем.</p>
+          <a href="/legal">Условия и сведения о данных →</a>
+        </section>
+      </main>
+    );
   }
 
   return (
@@ -1029,17 +1106,17 @@ export default function Home() {
       {searchOpen && (
         <div className="search-row">
           <span>⌕</span>
-          <input autoFocus value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Название, магазин или категория" aria-label="Поиск товаров" />
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Название, магазин или категория" aria-label="Поиск товаров" />
           {search && <button onClick={() => setSearch("")} aria-label="Очистить поиск">×</button>}
         </div>
       )}
 
       {activeNav === "ИИ-поиск" ? (
-        <SmartDiscoveryView products={products} />
-      ) : activeNav === "Инвестиции" ? (
-        <InvestmentsView />
+        <SmartDiscoveryView products={products} initData={telegramInitDataValue} />
+      ) : activeNav === "CS2 рынок" ? (
+        <InvestmentsView initData={telegramInitDataValue} />
       ) : activeNav === "Профиль" ? (
-        <ProfileView products={products} palette={palette} profile={profile} syncStatus={syncStatus} syncMessage={syncMessage} refreshingPrices={refreshingPrices} currency={currency} ratesReady={rates.USD > 0 && rates.EUR > 0} onCurrency={setCurrency} onRefreshAll={refreshAllPrices} onTheme={() => setThemeOpen(true)} />
+        <ProfileView products={products} palette={palette} profile={profile} syncStatus={syncStatus} syncMessage={syncMessage} refreshingPrices={refreshingPrices} currency={currency} ratesReady={rates.USD > 0 && rates.EUR > 0} onCurrency={setCurrency} onRefreshAll={refreshAllPrices} onTheme={() => setThemeOpen(true)} onExport={exportProfileData} onDelete={() => void deleteProfileData()} onRevokeAi={revokeAiConsent} />
       ) : (
         <>
           <section className="welcome-row">
@@ -1129,12 +1206,12 @@ export default function Home() {
           { item: "Главная", icon: "⌂" },
           { item: "ИИ-поиск", icon: "✦" },
           { item: "Добавить", icon: "+" },
-          { item: "Инвестиции", icon: null },
+          { item: "CS2 рынок", icon: null },
           { item: "Избранное", icon: "♡" },
         ].map(({ item, icon }) => (
           <button key={item} className={`${activeNav === item ? "current" : ""} ${item === "Добавить" ? "nav-add" : ""}`} onClick={() => changeNav(item)} aria-label={item}>
-            <span className={item === "Инвестиции" ? "nav-investments-icon" : undefined}>
-              {item === "Инвестиции" ? (
+            <span className={item === "CS2 рынок" ? "nav-investments-icon" : undefined}>
+              {item === "CS2 рынок" ? (
                 <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                   <path d="M7 17 17 7M9 7h8v8" />
                 </svg>
@@ -1195,6 +1272,18 @@ export default function Home() {
           }}
         />
       )}
+      {profileConsentOpen && (
+        <div className="modal-backdrop consent-required">
+          <section className="modal search-consent-modal" role="dialog" aria-modal="true" aria-labelledby="profile-consent-title">
+            <div className="modal-kicker"><span>✓</span> СОГЛАСИЕ НА СИНХРОНИЗАЦИЮ</div>
+            <h2 id="profile-consent-title">Подключить личный профиль?</h2>
+            <p className="modal-lead">Для синхронизации между вашими устройствами PricePulse сохранит Telegram ID, карточки товаров, настройки уведомлений, валюту и палитру. Имя, username, фото, телефон и сообщения бот не сохраняет.</p>
+            <div className="consent-points"><p><span>✓</span><b>Цель:</b> синхронизация и уведомления о заданном изменении цены</p><p><span>×</span><b>Не используется:</b> реклама, продажа данных и публичные профили</p></div>
+            <p className="consent-memory">Данные можно экспортировать и полностью удалить в профиле. Сейчас сервис работает как закрытый персональный инструмент. Подробнее — <a href="/legal" target="_blank" rel="noopener noreferrer">в сведениях о данных</a>.</p>
+            <div className="consent-actions"><button type="button" className="primary-button" onClick={() => { window.localStorage.setItem(PROFILE_CONSENT_KEY, "accepted"); window.location.reload(); }}>Согласен и подключить <span>→</span></button></div>
+          </section>
+        </div>
+      )}
       {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}
     </main>
     </CurrencyContext.Provider>
@@ -1205,7 +1294,7 @@ function ProductCard({ product, onFavorite, onDelete, onOpen }: { product: Produ
   const formatPrice = usePriceFormatter();
   const forecast = forecastFor(product);
   return (
-    <article className="product-card" role="button" tabIndex={0} onClick={() => onOpen(product)} onKeyDown={(event) => event.key === "Enter" && onOpen(product)}>
+    <div className="product-card" role="button" tabIndex={0} onClick={() => onOpen(product)} onKeyDown={(event) => event.key === "Enter" && onOpen(product)}>
       <div className={`product-art ${product.artClass} ${product.imageUrl ? "has-preview" : ""}`}>
         <span>{product.art}</span>
         {product.imageUrl && <img src={product.imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" onError={(event) => { event.currentTarget.hidden = true; event.currentTarget.parentElement?.classList.remove("has-preview"); }} />}
@@ -1232,7 +1321,7 @@ function ProductCard({ product, onFavorite, onDelete, onOpen }: { product: Produ
           <time>{product.nextCheck}</time>
         </div>
       </div>
-    </article>
+    </div>
   );
 }
 
@@ -1352,7 +1441,7 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
   }
 
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div role="presentation" className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="modal add-modal" role="dialog" aria-modal="true" aria-labelledby="add-title">
         <div className="modal-handle" />
         <button className="modal-close" onClick={onClose} aria-label="Закрыть">×</button>
@@ -1361,7 +1450,7 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
         <p className="modal-lead">Вставьте ссылку — распознаем товар и начнём следить за ценой.</p>
         <form onSubmit={submit}>
           <label className="field-label" htmlFor="product-url">Ссылка на товар</label>
-          <label className="url-field" htmlFor="product-url"><span>↗</span><input id="product-url" type="url" autoFocus value={url} onChange={(event) => { setUrl(event.target.value); setError(""); }} placeholder="https://lis-skins.com/market/..." /></label>
+          <label className="url-field" htmlFor="product-url"><span>↗</span><input id="product-url" type="url" value={url} onChange={(event) => { setUrl(event.target.value); setError(""); }} placeholder="https://lis-skins.com/market/..." /></label>
           <p className="field-hint">LIS-SKINS распознаётся автоматически по официальному каталогу</p>
 
           {!lisUrlEntered && url && (
@@ -1502,7 +1591,7 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAle
   }
 
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div role="presentation" className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className={"modal details-modal" + (sheetDragging ? " is-dragging" : "") + (sheetDismissing ? " is-dismissing" : "")} style={{ "--sheet-drag-y": sheetDragY + "px" } as CSSProperties} role="dialog" aria-modal="true" aria-labelledby="detail-title">
         <div className="modal-drag-zone" onPointerDown={startSheetDrag} onPointerMove={moveSheetDrag} onPointerUp={finishSheetDrag} onPointerCancel={cancelSheetDrag}>
           <div className="modal-handle" />
@@ -1638,60 +1727,12 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAle
   );
 }
 
-function CollectionsView({ collections, products, onShare, onOpen, onCreate }: { collections: Collection[]; products: Product[]; onShare: (collection: Collection) => void; onOpen: (collection: Collection) => void; onCreate: () => void }) {
-  const formatPrice = usePriceFormatter();
-  return (
-    <section className="collections-view">
-      <div className="collections-title">
-        <div><p className="eyebrow">ЦЕНЫ, КОТОРЫМИ МОЖНО ДЕЛИТЬСЯ</p><h1>Мои подборки</h1></div>
-        <button className="outline-add collection-add" onClick={onCreate}><span>＋</span> Новая подборка</button>
-      </div>
-      <div className="collections-hero">
-        <div><span>⇧</span><h2>Соберите товары вместе</h2><p>Откройте подборку, быстро просмотрите товары или отправьте одну ссылку другу.</p></div>
-        <div className="shared-demo"><span>pricepulse.app</span><b>/collection/your-list</b><i>↗</i></div>
-      </div>
-      <div className="collection-grid">
-        {collections.map((collection, collectionIndex) => {
-          const items = products.filter((product) => collection.productIds.includes(product.id));
-          const total = items.reduce((sum, item) => sum + item.price, 0);
-          return (
-            <article className="collection-card" key={collection.id}>
-              <button
-                type="button"
-                className="collection-card-open"
-                aria-label={`Открыть подборку ${collection.name}`}
-                onClick={() => onOpen(collection)}
-              >
-              <div className={`collection-cover cover-${collectionIndex % 3}`}>
-                <div className="collection-stack">
-                  {items.slice(0, 3).map((item) => (
-                    <span key={item.id} className={`${item.artClass} ${item.imageUrl ? "has-image" : ""}`}>
-                      {item.imageUrl ? <img src={item.imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" /> : item.art}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <div className="collection-body">
-                <p>{items.length} {items.length === 1 ? "товар" : "товара"} · {formatPrice(total)}</p>
-                <h3>{collection.name}</h3>
-                <span className="collection-open-label">Открыть товары <i>→</i></span>
-              </div>
-              </button>
-              <button className="collection-share" type="button" onClick={() => void onShare(collection)} aria-label={`Поделиться подборкой ${collection.name}`}>↗</button>
-            </article>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
 function CollectionDetailsModal({ collection, products, onClose, onShare, onOpenProduct }: { collection: Collection; products: Product[]; onClose: () => void; onShare: (collection: Collection) => void; onOpenProduct: (product: Product) => void }) {
   const formatPrice = usePriceFormatter();
   const items = products.filter((product) => collection.productIds.includes(product.id));
   const total = items.reduce((sum, product) => sum + product.price, 0);
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div role="presentation" className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="modal collection-details-modal" role="dialog" aria-modal="true" aria-labelledby="collection-details-title">
         <div className="modal-handle" />
         <button className="modal-close" onClick={onClose} aria-label="Закрыть">×</button>
@@ -1722,7 +1763,7 @@ function CollectionModal({ products, onClose, onCreate }: { products: Product[];
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [error, setError] = useState("");
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div role="presentation" className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="modal collection-modal" role="dialog" aria-modal="true" aria-labelledby="collection-title">
         <div className="modal-handle" /><button className="modal-close" onClick={onClose} aria-label="Закрыть">×</button>
         <div className="modal-kicker"><span>⇧</span> ОБЩАЯ ПОДБОРКА</div>
@@ -1749,7 +1790,7 @@ function ThemeModal({ palette, onApply, onClose }: { palette: Palette; onApply: 
   const previewStyle = { "--preview-paper": selected.paper, "--preview-ink": selected.ink, "--preview-surface": selected.surface ?? palettes.find((item) => item.id === selected.id)?.surface ?? "#151713", "--preview-card": selected.card, "--preview-accent": selected.accent, "--preview-accent-2": selected.accent2, "--preview-accent-3": selected.accent3 } as CSSProperties;
   const updateCustom = (key: keyof Pick<Palette, "paper" | "ink" | "card" | "accent" | "accent2" | "accent3">, value: string) => setSelected((current) => ({ ...current, surface: current.surface ?? palettes.find((item) => item.id === current.id)?.surface ?? "#151713", id: "custom", name: "Моя палитра", [key]: value }));
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+    <div role="presentation" className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="modal theme-modal" role="dialog" aria-modal="true" aria-labelledby="theme-title">
         <div className="modal-handle" /><button className="modal-close" onClick={onClose} aria-label="Закрыть">×</button>
         <div className="modal-kicker"><span>◐</span> ПЕРСОНАЛИЗАЦИЯ</div>
@@ -1786,6 +1827,9 @@ function ProfileView({
   onCurrency,
   onRefreshAll,
   onTheme,
+  onExport,
+  onDelete,
+  onRevokeAi,
 }: {
   products: Product[];
   palette: Palette;
@@ -1798,6 +1842,9 @@ function ProfileView({
   onCurrency: (currency: CurrencyCode) => void;
   onRefreshAll: () => Promise<void>;
   onTheme: () => void;
+  onExport: () => void;
+  onDelete: () => void;
+  onRevokeAi: () => void;
 }) {
   const name = profile ? [profile.firstName, profile.lastName].filter(Boolean).join(" ") : "Telegram-профиль";
   const syncLabel = syncStatus === "synced"
@@ -1845,6 +1892,13 @@ function ProfileView({
           </div>
         </div>
         <button className="setting-row theme-setting" onClick={onTheme}><span>Цветовая палитра</span><b><i style={{ background: palette.accent }} /><i style={{ background: palette.accent2 }} /><i style={{ background: palette.accent3 }} /> {palette.name} →</b></button>
+      </div>
+      <div className="settings-card privacy-settings">
+        <h2>Данные и приватность</h2>
+        <button className="setting-row privacy-action" type="button" onClick={onExport}><span>Скачать мои данные</span><b>JSON ↓</b></button>
+        <button className="setting-row privacy-action" type="button" onClick={onRevokeAi}><span>Отозвать запомненное AI-согласие</span><b>Отозвать</b></button>
+        <a className="setting-row privacy-action" href="/legal"><span>Условия и сведения о данных</span><b>Открыть →</b></a>
+        <button className="setting-row privacy-action danger" type="button" onClick={onDelete}><span>Удалить профиль и все данные</span><b>Удалить</b></button>
       </div>
       <div className="settings-card">
         <div className="features-heading"><h2>Новые возможности</h2><span>ОБНОВЛЕНО</span></div>

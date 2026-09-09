@@ -1,13 +1,15 @@
 import type { Metadata, Viewport } from "next";
+import Script from "next/script";
 import "./globals.css";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://pricepulse-app.bokcerkbr.chatgpt.site"),
   title: "PricePulse — мониторинг цен",
-  description: "Telegram Mini App для отслеживания цен, избранного и уведомлений о выгодных покупках.",
+  description: "Закрытое Telegram Mini App для личного мониторинга цен и сервисных уведомлений.",
+  robots: { index: false, follow: false, nocache: true },
   openGraph: {
     title: "PricePulse — следи за ценой. Покупай вовремя.",
-    description: "Сравнение магазинов, прогноз цены и общие подборки в одном Telegram Mini App.",
+    description: "Личный мониторинг цен и сервисные уведомления в закрытом Telegram Mini App.",
     type: "website",
     images: [
       {
@@ -21,7 +23,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "PricePulse — следи за ценой. Покупай вовремя.",
-    description: "Сравнение магазинов, прогноз цены и общие подборки.",
+    description: "Личный мониторинг цен в закрытом Telegram Mini App.",
     images: ["/og.png"],
   },
 };
@@ -37,7 +39,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
   return (
     <html lang="ru" suppressHydrationWarning>
       <head>
-        <script src="https://telegram.org/js/telegram-web-app.js?63" />
+        <Script src="https://telegram.org/js/telegram-web-app.js?63" strategy="beforeInteractive" />
       </head>
       <body>{children}</body>
     </html>

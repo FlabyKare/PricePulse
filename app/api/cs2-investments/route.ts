@@ -1,3 +1,5 @@
+import { requirePrivateTelegramAccess } from "@/lib/private-access";
+
 import { and, asc, gte, inArray, lt } from "drizzle-orm";
 import { cs2MarketSnapshots } from "@/db/schema";
 
@@ -171,7 +173,9 @@ function catalysts(type: ItemType) {
   return ["ротация коллекций", "визуальные изменения в обновлениях", "рост спроса на оружие и trade-up"];
 }
 
-export async function GET() {
+export async function GET(request: Request) {
+  const accessDenied = await requirePrivateTelegramAccess(request);
+  if (accessDenied) return accessDenied;
   if (responseCache && responseCache.expiresAt > Date.now()) return Response.json(responseCache.payload, { headers: { "cache-control": "private, max-age=60" } });
   try {
     const [items, sources] = await Promise.all([catalogue(), publicSources()]);

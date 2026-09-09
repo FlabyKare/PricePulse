@@ -63,7 +63,7 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /CollectionDetailsModal/);
   assert.match(page, /onOpen/);
   assert.doesNotMatch(page, /item: "Подборки"/);
-  assert.match(page, /item: "Главная"[\s\S]+item: "ИИ-поиск"[\s\S]+item: "Добавить"[\s\S]+item: "Инвестиции"[\s\S]+item: "Избранное"/);
+  assert.match(page, /item: "Главная"[\s\S]+item: "ИИ-поиск"[\s\S]+item: "Добавить"[\s\S]+item: "CS2 рынок"[\s\S]+item: "Избранное"/);
   assert.match(page, /nav-investments-icon/);
   assert.match(css, /grid-template-columns: repeat\(5, 1fr\)/);
   assert.match(page, /onPointerDown={startSheetDrag}/);
@@ -84,7 +84,7 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /Загружаем ваши товары и актуальную стоимость/);
   assert.match(page, /pricepulse-cloud-migrated:/);
   assert.match(page, /Переносим карточки этого устройства/);
-  assert.match(page, /collection-card-open/);
+  assert.doesNotMatch(page, /function CollectionsView|collection-card-open/);
   assert.match(profileRoute, /unexpectedlyMissing/);
   assert.match(profileRoute, /deletedProductIds/);
   assert.match(profileRoute, /stored\.revision !== state\.revision/);
@@ -102,7 +102,7 @@ test("removes the temporary starter preview", async () => {
   assert.match(aiViews, /searchEngine === "openrouter-live-market"/);
   assert.match(aiViews, /● LIVE/);
   assert.match(aiViews, /найденные прямые страницы товаров/);
-  assert.match(aiViews, /CS2 ИНВЕСТ-РАДАР/);
+  assert.match(aiViews, /АНАЛИТИКА РЫНКА CS2/);
   assert.match(aiViews, /offline-cs2-watchlist/);
   assert.ok(aiViews.includes("/api/cs2-investments"));
   assert.match(page, /InvestmentsView/);
@@ -122,6 +122,7 @@ test("removes the temporary starter preview", async () => {
   assert.match(resolveRoute, /steamcommunity\.com\/market\/listings\/730/);
   assert.match(resolveRoute, /imageFromPage/);
   assert.match(page, /OpenRouter-ready/);
+  assert.match(cs2InvestmentsRoute, /эвристика/);
   assert.match(css, /profile-sync-badge/);
   assert.match(css, /\.primary-button[^}]*display:\s*inline-flex/s);
   assert.match(css, /currency-switch/);

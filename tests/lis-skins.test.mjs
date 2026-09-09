@@ -8,6 +8,7 @@ async function loadWorker() {
 }
 
 const workerEnv = {
+  PRICEPULSE_ACCESS_MODE: "public",
   ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) },
 };
 const workerContext = { waitUntil() {}, passThroughOnException() {} };

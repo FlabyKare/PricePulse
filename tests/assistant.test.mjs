@@ -7,7 +7,7 @@ async function loadWorker() {
   return (await import(url.href)).default;
 }
 
-const env = { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
+const env = { PRICEPULSE_ACCESS_MODE: "public", ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } };
 const context = { waitUntil() {}, passThroughOnException() {} };
 
 async function ask(body) {

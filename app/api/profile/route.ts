@@ -102,20 +102,20 @@ async function upsertTelegramUser(user: NonNullable<Awaited<ReturnType<typeof au
   const db = getDb();
   await db.insert(telegramUsers).values({
     id: user.id,
-    firstName: user.firstName,
-    lastName: user.lastName,
-    username: user.username,
-    languageCode: user.languageCode,
-    photoUrl: user.photoUrl,
+    firstName: "Telegram user",
+    lastName: null,
+    username: null,
+    languageCode: null,
+    photoUrl: null,
     lastAuthAt: user.authDate,
   }).onConflictDoUpdate({
     target: telegramUsers.id,
     set: {
-      firstName: user.firstName,
-      lastName: user.lastName,
-      username: user.username,
-      languageCode: user.languageCode,
-      photoUrl: user.photoUrl,
+      firstName: "Telegram user",
+      lastName: null,
+      username: null,
+      languageCode: null,
+      photoUrl: null,
       lastAuthAt: user.authDate,
       updatedAt: sql`CURRENT_TIMESTAMP`,
     },
@@ -133,6 +133,7 @@ async function conflictResponse(userId: string, message = "Профиль изм
 }
 
 export async function GET(request: Request) {
+  if (request.headers.get("x-pricepulse-profile-consent") !== "accepted") return Response.json({ error: "Нужно согласие на синхронизацию профиля" }, { status: 428 });
   const auth = await authenticateTelegramRequest(request);
   if (!auth.user) return auth.response;
 
@@ -153,6 +154,7 @@ export async function GET(request: Request) {
 }
 
 export async function PUT(request: Request) {
+  if (request.headers.get("x-pricepulse-profile-consent") !== "accepted") return Response.json({ error: "Нужно согласие на синхронизацию профиля" }, { status: 428 });
   const auth = await authenticateTelegramRequest(request);
   if (!auth.user) return auth.response;
 
@@ -218,5 +220,22 @@ export async function PUT(request: Request) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Не удалось сохранить профиль";
     return Response.json({ error: message }, { status: /поврежд|размер|валют|Версия/.test(message) ? 400 : 500 });
+  }
+}
+
+export async function DELETE(request: Request) {
+  const auth = await authenticateTelegramRequest(request);
+  if (!auth.user) return auth.response;
+
+  try {
+    const db = getDb();
+    await db.delete(profileStates).where(eq(profileStates.userId, auth.user.id));
+    await db.delete(telegramUsers).where(eq(telegramUsers.id, auth.user.id));
+    return Response.json({ deleted: true }, { headers: { "cache-control": "no-store" } });
+  } catch (error) {
+    return Response.json(
+      { error: error instanceof Error ? error.message : "Не удалось удалить данные профиля" },
+      { status: 500 },
+    );
   }
 }

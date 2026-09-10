@@ -111,8 +111,8 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /pricepulse-currency/);
   assert.match(page, /\/api\/rates/);
   assert.match(page, /Обновить все цены/);
-  assert.match(page, /проверяются по содержимому страницы/);
-  assert.match(page, /resolveStoreProduct/);
+  assert.match(page, /любой публичной HTTPS-страницы/);
+  assert.match(resolveRoute, /resolveStoreProduct/);
   assert.match(page, /MIN_FORECAST_POINTS = 3/);
   assert.match(page, /ДОВЕРИЕ МОДЕЛИ/);
   assert.match(page, /aria-expanded={forecastOpen}/);

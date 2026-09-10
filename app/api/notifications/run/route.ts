@@ -3,6 +3,7 @@ import { env } from "cloudflare:workers";
 import { getDb } from "@/db";
 import { profileStates } from "@/db/schema";
 import { findLisSkinsItem, isLisSkinsUrl, parseCbrUsdRate, rubPriceFromUsd, type LisSkinsExportItem } from "@/lib/lis-skins";
+import { resolveStoreProduct } from "@/lib/store-product";
 import {
   applyObservedPrice,
   alertSettings,
@@ -17,7 +18,6 @@ const MAX_PROFILES_PER_RUN = 25;
 const MAX_CHECKS_PER_RUN = 12;
 const LIS_EXPORT_URL = "https://lis-skins.com/market_export_json/csgo.json";
 const CBR_RATES_URL = "https://www.cbr.ru/scripts/XML_daily.asp";
-const SUPPORTED_DOMAINS = ["ozon.ru", "market.yandex.ru", "wildberries.ru", "wb.ru", "dns-shop.ru", "mvideo.ru", "citilink.ru", "lamoda.ru", "goldapple.ru", "letu.ru", "avito.ru", "hoff.ru", "vseinstrumenti.ru", "exist.ru", "emex.ru", "autodoc.ru"];
 let lisCache: { items: LisSkinsExportItem[]; rate: number; expiresAt: number } | null = null;
 
 function parseProducts(value: string) {
@@ -70,21 +70,6 @@ async function lisCatalogue() {
   return lisCache;
 }
 
-function isSupportedStore(url: URL) {
-  const host = url.hostname.toLocaleLowerCase("en").replace(/^www\./, "");
-  return SUPPORTED_DOMAINS.some((domain) => host === domain || host.endsWith(`.${domain}`));
-}
-
-function rubPriceFromPage(html: string) {
-  const decoded = html.replace(/&nbsp;|&#160;/gi, " ").replace(/&rub;|&#8381;/gi, "₽");
-  const matches = [...decoded.matchAll(/(?:^|[^\d])((?:\d{1,3}(?:[\s\u00a0]\d{3})+|\d{2,8})(?:[,.]\d{1,2})?)\s*(?:₽|руб(?:\.|лей)?)/gim)];
-  for (const match of matches) {
-    const price = Number(match[1].replace(/[\s\u00a0]/g, "").replace(",", "."));
-    if (Number.isFinite(price) && price > 0 && price <= 100_000_000) return price;
-  }
-  return null;
-}
-
 async function resolvePrice(product: MonitoredProduct) {
   if (isLisSkinsUrl(product.url)) {
     const catalogue = await lisCatalogue();
@@ -93,20 +78,9 @@ async function resolvePrice(product: MonitoredProduct) {
     return rubPriceFromUsd(item.price, catalogue.rate);
   }
   const url = new URL(product.url);
-  if (url.protocol !== "https:" || !isSupportedStore(url)) throw new Error("Магазин не поддерживается");
-  const response = await fetch(url.href, {
-    headers: {
-      accept: "text/html,application/xhtml+xml",
-      "accept-language": "ru-RU,ru;q=0.9",
-      "user-agent": "Mozilla/5.0 (compatible; PricePulse/1.0; +https://pricepulse-app.bokcerkbr.chatgpt.site)",
-    },
-    redirect: "follow",
-    signal: AbortSignal.timeout(12_000),
-  });
-  if (!response.ok) throw new Error(`Магазин вернул ${response.status}`);
-  const price = rubPriceFromPage((await response.text()).slice(0, 500_000));
-  if (!price) throw new Error("Цена не распознана");
-  return price;
+  const resolved = await resolveStoreProduct(url, product.name);
+  if (!resolved.priceRub) throw new Error("Цена не распознана");
+  return resolved.priceRub;
 }
 
 async function sendPriceNotification(

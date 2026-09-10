@@ -67,7 +67,7 @@ type ResolvedStoreProduct = {
   approximate: boolean;
   needsManualPrice: boolean;
   imageUrl?: string | null;
-  resolvedBy: "page-content" | "url-fallback" | "safe-fallback" | "official-catalogue";
+  resolvedBy: "page-content" | "url-fallback" | "safe-fallback" | "price-index" | "official-catalogue";
 };
 
 type Collection = {
@@ -1451,7 +1451,7 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
         <form onSubmit={submit}>
           <label className="field-label" htmlFor="product-url">Ссылка на товар</label>
           <label className="url-field" htmlFor="product-url"><span>↗</span><input id="product-url" type="url" value={url} onChange={(event) => { setUrl(event.target.value); setError(""); }} placeholder="https://lis-skins.com/market/..." /></label>
-          <p className="field-hint">LIS-SKINS распознаётся автоматически по официальному каталогу</p>
+          <p className="field-hint">LIS-SKINS распознаётся по официальному каталогу, остальные товары — по публичной странице магазина</p>
 
           {!lisUrlEntered && url && (
             <div className="manual-price-field">
@@ -1459,7 +1459,7 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
               <input id="manual-name" className="standalone-input product-name-fallback" value={manualName} onChange={(event) => setManualName(event.target.value)} placeholder="Например, Apple AirPods Pro 2" />
               <label className="field-label manual-price-label" htmlFor="manual-price">Текущая цена <span className="optional-label">если не определится</span></label>
               <label className="price-input" htmlFor="manual-price"><input id="manual-price" inputMode="decimal" value={manualPrice} onChange={(event) => setManualPrice(event.target.value.replace(/[^\d,.\s]/g, ""))} placeholder="Например, 4 500" /><span>₽</span></label>
-              <p className="field-hint">Ozon и другие поддерживаемые магазины проверяются по содержимому страницы, а не по названию в URL.</p>
+              <p className="field-hint">PricePulse читает структурированную цену с любой публичной HTTPS-страницы. Для DNS используется резервный индекс цены при блокировке страницы.</p>
             </div>
           )}
 
@@ -1903,7 +1903,7 @@ function ProfileView({
       <div className="settings-card">
         <div className="features-heading"><h2>Новые возможности</h2><span>ОБНОВЛЕНО</span></div>
         <button className="idea-row feature-action" type="button" onClick={() => void onRefreshAll()} disabled={refreshingPrices} aria-busy={refreshingPrices}>
-          <span className={refreshingPrices ? "refresh-spin" : ""}>↻</span><p><b>{refreshingPrices ? "Обновляем цены…" : "Обновить все цены"}</b><small>{refreshingPrices ? "Проверяем страницы магазинов" : "Проверить поддерживаемые товары прямо сейчас"}</small></p><i>{refreshingPrices ? "…" : "→"}</i>
+          <span className={refreshingPrices ? "refresh-spin" : ""}>↻</span><p><b>{refreshingPrices ? "Обновляем цены…" : "Обновить все цены"}</b><small>{refreshingPrices ? "Проверяем страницы магазинов" : "Проверить сохранённые товары прямо сейчас"}</small></p><i>{refreshingPrices ? "…" : "→"}</i>
         </button>
         <div className="idea-row enabled"><span>↯</span><p><b>Сравнение магазинов</b><small>Добавляйте предложения прямо в карточке</small></p><i>✓</i></div>
         <div className="idea-row enabled"><span>↘</span><p><b>Прогноз выгодной цены</b><small>Рекомендация на основе истории и тренда</small></p><i>✓</i></div>

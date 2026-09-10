@@ -58,7 +58,7 @@ test("resolves the Titan Katowice sticker from the LIS-SKINS export", async () =
   }
 });
 
-test("rejects unrelated store URLs before fetching the LIS-SKINS catalogue", async () => {
+test("accepts arbitrary public HTTPS store URLs without fetching the LIS-SKINS catalogue", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => { throw new Error("Catalogue must not be requested"); };
   try {
@@ -68,7 +68,8 @@ test("rejects unrelated store URLs before fetching the LIS-SKINS catalogue", asy
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ url: "https://example.com/product" }),
     }), workerEnv, workerContext);
-    assert.equal(response.status, 400);
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).source, "EXAMPLE");
   } finally {
     globalThis.fetch = originalFetch;
   }

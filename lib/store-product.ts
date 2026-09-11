@@ -7,10 +7,16 @@ export type ResolvedStoreProduct = {
   approximate: boolean;
   needsManualPrice: boolean;
   imageUrl: string | null;
-  resolvedBy: "page-content" | "reader-content" | "url-fallback" | "safe-fallback" | "web-index";
+  resolvedBy: "page-content" | "reader-content" | "url-fallback" | "safe-fallback" | "web-index" | "official-catalogue";
 };
 
-type RuntimeEnv = { OPENROUTER_API_KEY?: string; OPENROUTER_MODEL?: string; WEBAPP_URL?: string };
+type RuntimeEnv = {
+  OPENROUTER_API_KEY?: string;
+  OPENROUTER_MODEL?: string;
+  WEBAPP_URL?: string;
+  OZON_RESOLVER_URL?: string;
+  OZON_RESOLVER_TOKEN?: string;
+};
 
 type StoreDefinition = { source: string; domains: string[] };
 
@@ -40,6 +46,31 @@ const REQUEST_HEADERS = {
 
 const dnsCanonicalCache = new Map<string, { url: string; expiresAt: number }>();
 const webIndexCache = new Map<string, { name: string; priceRub: number; expiresAt: number }>();
+const wbArticleCache = new Map<string, { value: ResolvedStoreProduct; expiresAt: number }>();
+
+export type MarketplaceArticle = { store: "WILDBERRIES" | "OZON"; article: string };
+
+export function parseMarketplaceArticle(value: string): MarketplaceArticle | null {
+  const input = value.trim();
+  const match = input.match(/^(wb|wildberries|вб|ozon|озон)\s*(?:[:#№-]\s*)?(\d{6,15})$/iu);
+  if (!match) return null;
+  return {
+    store: /^(?:wb|wildberries|вб)$/iu.test(match[1]) ? "WILDBERRIES" : "OZON",
+    article: match[2],
+  };
+}
+
+function wildberriesArticleFromUrl(url: URL) {
+  if (sourceFor(url) !== "WILDBERRIES") return null;
+  return url.pathname.match(/\/catalog\/(\d{6,15})(?:\/|$)/i)?.[1]
+    ?? url.searchParams.get("nm")?.match(/^\d{6,15}$/)?.[0]
+    ?? null;
+}
+
+function ozonArticleFromUrl(url: URL) {
+  if (sourceFor(url) !== "OZON") return null;
+  return url.pathname.match(/(?:-|\/)(\d{6,15})(?:\/|$)/)?.[1] ?? null;
+}
 
 function clean(value: string, limit = 180) {
   return value
@@ -424,9 +455,228 @@ async function webIndexFallback(url: URL, fallbackName: string) {
   } catch { return null; }
 }
 
+function wbPriceRub(product: unknown) {
+  if (!product || typeof product !== "object") return null;
+  const sizes = (product as { sizes?: unknown }).sizes;
+  if (!Array.isArray(sizes)) return null;
+  const prices = sizes.flatMap((size) => {
+    if (!size || typeof size !== "object") return [];
+    const price = (size as { price?: unknown }).price;
+    if (!price || typeof price !== "object") return [];
+    const productPrice = Number((price as { product?: unknown }).product);
+    return Number.isFinite(productPrice) && productPrice > 0 ? [productPrice / 100] : [];
+  });
+  return prices.length ? Math.round(Math.min(...prices)) : null;
+}
+
+async function wbStaticCard(article: string) {
+  const id = Number(article);
+  const vol = Math.floor(id / 100_000);
+  const part = Math.floor(id / 1_000);
+  for (let start = 1; start <= 31; start += 6) {
+    const baskets = Array.from({ length: Math.min(6, 32 - start) }, (_, index) => start + index);
+    const attempts = await Promise.all(baskets.map(async (basket) => {
+      const base = `https://basket-${String(basket).padStart(2, "0")}.wbbasket.ru/vol${vol}/part${part}/${article}`;
+      try {
+        const response = await fetch(`${base}/info/ru/card.json`, {
+          headers: { accept: "application/json", referer: "https://www.wildberries.ru/" },
+          cache: "no-store",
+          signal: AbortSignal.timeout(6_000),
+        });
+        if (!response.ok) return null;
+        const card = await response.json() as { nm_id?: unknown; imt_name?: unknown; selling?: { brand_name?: unknown } };
+        if (String(card.nm_id) !== article) return null;
+        return { basket, base, card };
+      } catch { return null; }
+    }));
+    const found = attempts.find(Boolean);
+    if (found) return found;
+  }
+  return null;
+}
+
+export async function resolveWildberriesArticle(article: string): Promise<ResolvedStoreProduct | null> {
+  if (!/^\d{6,15}$/.test(article)) return null;
+  const cached = wbArticleCache.get(article);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  const url = `https://www.wildberries.ru/catalog/${article}/detail.aspx`;
+  try {
+    const endpoint = new URL("https://card.wb.ru/cards/v4/detail");
+    endpoint.search = new URLSearchParams({ appType: "1", curr: "rub", dest: "-1257786", spp: "30", nm: article }).toString();
+    const response = await fetch(endpoint, {
+      headers: {
+        accept: "application/json",
+        origin: "https://www.wildberries.ru",
+        referer: "https://www.wildberries.ru/",
+        "accept-language": "ru-RU,ru;q=0.9",
+        "user-agent": REQUEST_HEADERS["user-agent"],
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (response.ok) {
+      const payload = await response.json() as { products?: unknown };
+      const products = Array.isArray(payload.products) ? payload.products : [];
+      const product = products.find((item) => item && typeof item === "object" && String((item as { id?: unknown }).id) === article) as {
+        name?: unknown; brand?: unknown; totalQuantity?: unknown;
+      } | undefined;
+      const priceRub = wbPriceRub(product);
+      const name = product && typeof product.name === "string" ? clean(`${typeof product.brand === "string" ? product.brand + " · " : ""}${product.name}`) : "";
+      if (product && name && priceRub) {
+        const value: ResolvedStoreProduct = {
+          source: "WILDBERRIES", name, url, priceRub,
+          count: Math.max(1, Number(product.totalQuantity) || 1),
+          approximate: false, needsManualPrice: false, imageUrl: null,
+          resolvedBy: "official-catalogue",
+        };
+        wbArticleCache.set(article, { value, expiresAt: Date.now() + 5 * 60_000 });
+        return value;
+      }
+    }
+  } catch { /* Use the first-party static catalogue below. */ }
+
+  const staticCard = await wbStaticCard(article);
+  if (!staticCard) return null;
+  let priceRub: number | null = null;
+  try {
+    const response = await fetch(`${staticCard.base}/info/price-history.json`, {
+      headers: { accept: "application/json", referer: "https://www.wildberries.ru/" },
+      cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
+    });
+    const history = response.ok ? await response.json() as unknown : null;
+    if (Array.isArray(history)) {
+      const latest = history
+        .filter((item) => item && typeof item === "object")
+        .sort((a, b) => Number((b as { dt?: unknown }).dt) - Number((a as { dt?: unknown }).dt))[0] as { price?: { RUB?: unknown } } | undefined;
+      const kopecks = Number(latest?.price?.RUB);
+      if (Number.isFinite(kopecks) && kopecks > 0) priceRub = Math.round(kopecks / 100);
+    }
+  } catch { /* A card can exist without price history. */ }
+  const rawName = typeof staticCard.card.imt_name === "string" ? staticCard.card.imt_name : "";
+  const rawBrand = typeof staticCard.card.selling?.brand_name === "string" ? staticCard.card.selling.brand_name : "";
+  const name = clean(`${rawBrand ? rawBrand + " · " : ""}${rawName}`) || `Товар Wildberries · артикул ${article}`;
+  const imageUrl = `${staticCard.base}/images/big/1.webp`;
+  const value: ResolvedStoreProduct = {
+    source: "WILDBERRIES", name, url, priceRub, count: 1,
+    approximate: Boolean(priceRub), needsManualPrice: !priceRub, imageUrl,
+    resolvedBy: "official-catalogue",
+  };
+  wbArticleCache.set(article, { value, expiresAt: Date.now() + 5 * 60_000 });
+  return value;
+}
+
+function ozonStringPrice(value: unknown) {
+  if (typeof value !== "string") return null;
+  if (!/[₽р]|rub/i.test(value) && !/^\s*\d[\d\s.,]*\s*$/.test(value)) return null;
+  return priceNumber(value);
+}
+
+function parseOzonPayload(payload: unknown, article: string, fallbackUrl: string): ResolvedStoreProduct | null {
+  if (!payload || typeof payload !== "object") return null;
+  const direct = payload as { name?: unknown; title?: unknown; priceRub?: unknown; price_rub?: unknown; url?: unknown; imageUrl?: unknown; image_url?: unknown; count?: unknown };
+  const directPrice = priceNumber(direct.priceRub ?? direct.price_rub);
+  const directName = typeof direct.name === "string" ? direct.name : typeof direct.title === "string" ? direct.title : "";
+  if (directPrice && directName) {
+    const candidateUrl = typeof direct.url === "string" ? direct.url : fallbackUrl;
+    if (!sameProductIdentity(new URL(fallbackUrl), candidateUrl)) return null;
+    return {
+      source: "OZON", name: clean(directName), url: candidateUrl, priceRub: Math.round(directPrice),
+      count: Math.max(1, Number(direct.count) || 1), approximate: false, needsManualPrice: false,
+      imageUrl: safeImageUrl(typeof direct.imageUrl === "string" ? direct.imageUrl : typeof direct.image_url === "string" ? direct.image_url : ""),
+      resolvedBy: "official-catalogue",
+    };
+  }
+
+  const states = (payload as { widgetStates?: unknown }).widgetStates;
+  if (!states || typeof states !== "object") return null;
+  const decoded: unknown[] = [];
+  for (const value of Object.values(states)) {
+    if (typeof value !== "string") continue;
+    try { decoded.push(JSON.parse(value)); } catch { /* Ignore unrelated widgets. */ }
+  }
+  let name = "";
+  let priceRub: number | null = null;
+  let imageUrl: string | null = null;
+  const visit = (value: unknown) => {
+    if (!value || typeof value !== "object") return;
+    if (Array.isArray(value)) { value.forEach(visit); return; }
+    const record = value as Record<string, unknown>;
+    if (!name) {
+      for (const key of ["productTitle", "title", "name"]) {
+        if (typeof record[key] === "string" && clean(record[key] as string).length >= 3) { name = clean(record[key] as string); break; }
+      }
+    }
+    if (!priceRub) {
+      for (const key of ["finalPrice", "cardPrice", "ozonCardPrice", "price"]) {
+        const candidate = ozonStringPrice(record[key]);
+        if (candidate) { priceRub = Math.round(candidate); break; }
+      }
+    }
+    if (!imageUrl) {
+      for (const key of ["imageUrl", "image", "src"]) {
+        if (typeof record[key] === "string") {
+          const candidate = safeImageUrl(record[key] as string, fallbackUrl);
+          if (candidate) { imageUrl = candidate; break; }
+        }
+      }
+    }
+    Object.values(record).forEach(visit);
+  };
+  decoded.forEach(visit);
+  if (!name || !priceRub) return null;
+  return {
+    source: "OZON", name, url: fallbackUrl, priceRub, count: 1,
+    approximate: false, needsManualPrice: false, imageUrl,
+    resolvedBy: "official-catalogue",
+  };
+}
+
+export async function resolveOzonArticle(article: string): Promise<ResolvedStoreProduct | null> {
+  if (!/^\d{6,15}$/.test(article)) return null;
+  const canonicalUrl = `https://www.ozon.ru/product/${article}/`;
+  const runtime = process.env as RuntimeEnv;
+  try {
+    const configured = runtime.OZON_RESOLVER_URL?.trim();
+    const endpoint = configured ? new URL(configured) : new URL("https://api.ozon.ru/composer-api.bx/page/json/v2");
+    endpoint.searchParams.set(configured ? "article" : "url", configured ? article : `/product/${article}/`);
+    if (configured) endpoint.searchParams.set("url", canonicalUrl);
+    const response = await fetch(endpoint, {
+      headers: {
+        accept: "application/json",
+        "accept-language": "ru-RU,ru;q=0.9",
+        "user-agent": REQUEST_HEADERS["user-agent"],
+        ...(configured && runtime.OZON_RESOLVER_TOKEN?.trim() ? { authorization: `Bearer ${runtime.OZON_RESOLVER_TOKEN.trim()}` } : {}),
+      },
+      cache: "no-store",
+      redirect: "follow",
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) return null;
+    return parseOzonPayload(await response.json(), article, canonicalUrl);
+  } catch { return null; }
+}
+
+export async function resolveMarketplaceArticle(reference: MarketplaceArticle, requestedName = "") {
+  if (reference.store === "WILDBERRIES") return resolveWildberriesArticle(reference.article);
+  const resolved = await resolveOzonArticle(reference.article);
+  if (resolved) return resolved;
+  return resolveStoreProduct(new URL(`https://www.ozon.ru/product/${reference.article}/`), requestedName || `Товар Ozon · артикул ${reference.article}`);
+}
+
 export async function resolveStoreProduct(url: URL, requestedName = ""): Promise<ResolvedStoreProduct> {
   assertSafePublicProductUrl(url);
   const source = sourceFor(url);
+  const wbArticle = wildberriesArticleFromUrl(url);
+  if (wbArticle) {
+    const product = await resolveWildberriesArticle(wbArticle);
+    if (product) return product;
+  }
+  const ozonArticle = ozonArticleFromUrl(url);
+  if (ozonArticle) {
+    const product = await resolveOzonArticle(ozonArticle);
+    if (product) return product;
+  }
   const canonicalUrl = source === "DNS" ? await resolveDnsCanonicalUrl(url) : url;
   let page: { html: string; finalUrl: string } | null = null;
   try { page = await fetchPage(canonicalUrl); } catch { /* Continue with safe public fallbacks. */ }

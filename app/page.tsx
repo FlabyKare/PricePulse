@@ -418,11 +418,11 @@ async function resolveLisProduct(url: string) {
   return result;
 }
 
-async function resolveStoreProduct(url: string, name = "") {
+async function resolveStoreProduct(input: string, name = "") {
   const response = await fetch("/api/products/resolve", {
     method: "POST",
     headers: telegramApiHeaders(true),
-    body: JSON.stringify({ url, name }),
+    body: JSON.stringify({ input, name }),
   });
   const result = await response.json() as ResolvedStoreProduct & { error?: string };
   if (!response.ok) throw new Error(result.error || "Не удалось распознать страницу магазина");
@@ -1231,7 +1231,7 @@ export default function Home() {
         ))}
       </nav>
 
-      {addOpen && <AddProductModal onClose={() => setAddOpen(false)} onAdd={addProduct} categories={categories.filter((item) => item !== "Все")} />}
+      {addOpen && <AddProductModal onClose={() => setAddOpen(false)} onAdd={addProduct} />}
       {themeOpen && <ThemeModal palette={palette} onApply={(next) => { setPalette(next); setThemeOpen(false); setToast(`Палитра «${next.name}» включена`); }} onClose={() => setThemeOpen(false)} />}
       {collectionOpen && <CollectionModal products={products} onClose={() => setCollectionOpen(false)} onCreate={(collection) => { setCollections((current) => [collection, ...current]); setCollectionOpen(false); setToast("Подборка создана — теперь ей можно делиться"); }} />}
       {selectedCollection && (
@@ -1334,63 +1334,57 @@ function ProductCard({ product, onFavorite, onDelete, onOpen }: { product: Produ
   );
 }
 
-function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; onAdd: (product: Product) => void; categories: string[] }) {
+function AddProductModal({ onClose, onAdd }: { onClose: () => void; onAdd: (product: Product) => void }) {
   const [url, setUrl] = useState("");
   const [period, setPeriod] = useState(3);
   const [customPeriod, setCustomPeriod] = useState("");
-  const [category, setCategory] = useState("CS2");
-  const [customCategory, setCustomCategory] = useState("");
   const [alertMode, setAlertMode] = useState<PriceAlertSettings["mode"]>("amount");
   const [alertThreshold, setAlertThreshold] = useState("");
   const [manualPrice, setManualPrice] = useState("");
   const [manualName, setManualName] = useState("");
   const [loading, setLoading] = useState(false);
   const [detecting, setDetecting] = useState(false);
-  const [detectedProduct, setDetectedProduct] = useState<{ inputUrl: string; product: ResolvedStoreProduct | ResolvedLisProduct } | null>(null);
+  const [detectedProduct, setDetectedProduct] = useState<{ inputValue: string; product: ResolvedStoreProduct | ResolvedLisProduct } | null>(null);
   const [detectionMessage, setDetectionMessage] = useState("");
   const [error, setError] = useState("");
   const nameEdited = useRef(false);
   const priceEdited = useRef(false);
-  const categoryEdited = useRef(false);
-  const lisUrlEntered = isLisSkinsUrl(url);
+  const lisUrlEntered = /^https:\/\//i.test(url.trim()) && isLisSkinsUrl(url.trim());
 
   useEffect(() => {
     const input = url.trim();
-    let parsedUrl: URL;
+    let parsedUrl: URL | null = null;
     try {
       parsedUrl = new URL(input);
       if (parsedUrl.protocol !== "https:") throw new Error();
     } catch {
-      setDetecting(false);
-      setDetectionMessage("");
-      return;
+      parsedUrl = null;
     }
+    const isArticle = /^(?:wb|wildberries|вб|ozon|озон)\s*(?:[:#№-]\s*)?\d{6,15}$/iu.test(input);
+    if (!parsedUrl && !isArticle) return;
 
     let cancelled = false;
     const timeout = window.setTimeout(async () => {
       setDetecting(true);
       setDetectionMessage("Распознаём название и текущую цену…");
       try {
-        const isLis = isLisSkinsUrl(parsedUrl.href);
+        const isLis = Boolean(parsedUrl && isLisSkinsUrl(parsedUrl.href));
         const resolved = isLis
-          ? await resolveLisProduct(parsedUrl.href)
-          : await resolveStoreProduct(parsedUrl.href);
+          ? await resolveLisProduct(parsedUrl!.href)
+          : await resolveStoreProduct(input);
         if (cancelled) return;
-        setDetectedProduct({ inputUrl: parsedUrl.href, product: resolved });
+        setDetectedProduct({ inputValue: input, product: resolved });
         if (!nameEdited.current && resolved.name) setManualName(resolved.name);
         if (!priceEdited.current && resolved.priceRub && resolved.priceRub > 0) {
           setManualPrice(Math.round(resolved.priceRub).toLocaleString("ru-RU"));
-        }
-        if (!categoryEdited.current) {
-          const suggestion = suggestedProductCategory(resolved);
-          const available = new Set(categories.filter((item) => item !== "Все"));
-          setCategory(available.has(suggestion) ? suggestion : "Другое");
         }
         setDetectionMessage(resolved.priceRub
           ? "Готово: название и цена подставлены автоматически"
           : resolved.source === "DNS"
             ? "Товар найден. DNS скрывает региональную цену — укажите цену, которую видите на странице"
-            : "Название найдено, но магазин не отдал цену — её можно указать вручную");
+            : resolved.source === "OZON"
+              ? "Товар Ozon найден, но защита магазина не отдала цену — её можно указать вручную"
+              : "Название найдено, но магазин не отдал цену — её можно указать вручную");
       } catch {
         if (!cancelled) {
           setDetectedProduct(null);
@@ -1405,16 +1399,21 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [url, categories]);
+  }, [url]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    let parsedUrl: URL;
+    const input = url.trim();
+    let parsedUrl: URL | null = null;
     try {
-      parsedUrl = new URL(url);
+      parsedUrl = new URL(input);
       if (parsedUrl.protocol !== "https:") throw new Error();
     } catch {
-      setError("Вставьте полную ссылку на страницу товара");
+      parsedUrl = null;
+    }
+    const isArticle = /^(?:wb|wildberries|вб|ozon|озон)\s*(?:[:#№-]\s*)?\d{6,15}$/iu.test(input);
+    if (!parsedUrl && !isArticle) {
+      setError("Укажите HTTPS-ссылку либо артикул в формате «WB 123456789» или «Ozon 123456789»");
       return;
     }
     const finalPeriod = customPeriod ? Number(customPeriod) : period;
@@ -1422,7 +1421,7 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
       setError("Минимальный период мониторинга — 1 час");
       return;
     }
-    const isLis = isLisSkinsUrl(parsedUrl.href);
+    const isLis = Boolean(parsedUrl && isLisSkinsUrl(parsedUrl.href));
     const enteredPrice = Number(manualPrice.replace(/\s/g, "").replace(",", "."));
     const enteredAlert = alertThreshold ? Number(alertThreshold.replace(/\s/g, "").replace(",", ".")) : null;
     const alertLimit = alertMode === "percent" ? 100 : 100_000_000;
@@ -1441,17 +1440,18 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
     setError("");
     try {
       let resolved: ResolvedStoreProduct | ResolvedLisProduct | null =
-        detectedProduct?.inputUrl === parsedUrl.href ? detectedProduct.product : null;
+        detectedProduct?.inputValue === input ? detectedProduct.product : null;
       if (!resolved) {
         try {
-          resolved = isLis ? await resolveLisProduct(parsedUrl.href) : await resolveStoreProduct(parsedUrl.href, manualName.trim());
+          resolved = isLis ? await resolveLisProduct(parsedUrl!.href) : await resolveStoreProduct(input, manualName.trim());
         } catch (resolveError) {
           if (isLis) throw resolveError;
         }
       }
 
-      const source = resolved?.source ?? parsedUrl.hostname.replace(/^www\./, "").toUpperCase();
-      const pathName = decodeURIComponent(parsedUrl.pathname).split("/").filter(Boolean).pop() ?? "";
+      const source = resolved?.source
+        ?? (/^(?:ozon|озон)/iu.test(input) ? "OZON" : /^(?:wb|wildberries|вб)/iu.test(input) ? "WILDBERRIES" : parsedUrl!.hostname.replace(/^www\./, "").toUpperCase());
+      const pathName = parsedUrl ? decodeURIComponent(parsedUrl.pathname).split("/").filter(Boolean).pop() ?? "" : "";
       const pathCandidate = pathName
         .replace(/\.(?:html?|aspx?)$/i, "")
         .replace(/[-_]?\d{5,}(?:[-_].*)?$/, "")
@@ -1469,13 +1469,18 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
       }
 
       const now = Date.now();
-      const productUrl = resolved?.url ?? parsedUrl.href;
+      const productUrl = resolved?.url ?? parsedUrl?.href;
+      if (!productUrl) {
+        setError("Не удалось определить ссылку карточки по артикулу");
+        return;
+      }
+      const productHost = new URL(productUrl).hostname;
       onAdd({
         id: now,
         name: productName,
         source,
         url: productUrl,
-        category: customCategory.trim() || category,
+        category: resolved ? suggestedProductCategory(resolved) : "Другое",
         price: currentPrice,
         oldPrice: currentPrice,
         change: 0,
@@ -1491,7 +1496,7 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
         alertReferencePrice: normalizedAlert ? currentPrice : undefined,
         alertCheckPending: false,
         offers: [{
-          id: `${now}-${parsedUrl.hostname}`,
+          id: `${now}-${productHost}`,
           store: source,
           price: currentPrice,
           url: productUrl,
@@ -1518,10 +1523,10 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
         <button className="modal-close" onClick={onClose} aria-label="Закрыть">×</button>
         <div className="modal-kicker"><span>＋</span> НОВОЕ НАБЛЮДЕНИЕ</div>
         <h2 id="add-title">Добавить товар</h2>
-        <p className="modal-lead">Вставьте ссылку — распознаем товар и начнём следить за ценой.</p>
+        <p className="modal-lead">Вставьте ссылку или артикул — распознаем товар и начнём следить за ценой.</p>
         <form onSubmit={submit}>
-          <label className="field-label" htmlFor="product-url">Ссылка на товар</label>
-          <label className="url-field" htmlFor="product-url"><span>↗</span><input id="product-url" type="url" value={url} onChange={(event) => {
+          <label className="field-label" htmlFor="product-url">Ссылка или артикул товара</label>
+          <label className="url-field" htmlFor="product-url"><span>↗</span><input id="product-url" type="text" inputMode="text" value={url} onChange={(event) => {
             setUrl(event.target.value);
             setDetectedProduct(null);
             setDetectionMessage("");
@@ -1529,10 +1534,9 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
             setManualPrice("");
             nameEdited.current = false;
             priceEdited.current = false;
-            categoryEdited.current = false;
             setError("");
-          }} placeholder="https://www.ozon.ru/product/..." /></label>
-          <p className="field-hint">Поддерживаются Ozon, DNS и товары с любой публичной HTTPS-страницы. Название подставим сами; цену берём только со страницы самого магазина.</p>
+          }} placeholder="Ссылка, WB 83811644 или Ozon 1948677209" /></label>
+          <p className="field-hint">Для артикула добавьте название магазина: «WB 123456789» или «Ozon 123456789». Поддерживается товар с любой публичной HTTPS-страницы. Категорию определим автоматически.</p>
           {url && detectionMessage && (
             <p className={"resolve-status " + (detecting ? "pending" : detectedProduct?.product.priceRub ? "success" : "manual")} aria-live="polite">
               <span aria-hidden="true">{detecting ? "↻" : detectedProduct?.product.priceRub ? "✓" : "!"}</span>
@@ -1550,28 +1554,18 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
             </div>
           )}
 
-          <div className="form-grid">
-            <div>
-              <span className="field-label">Категория</span>
-              <select value={category} onChange={(event) => { categoryEdited.current = true; setCategory(event.target.value); }} aria-label="Категория товара">
-                {categories.filter((item) => item !== "Все" && item !== "Другое").map((item) => <option key={item}>{item}</option>)}
-                <option value="Другое">Другое</option>
-              </select>
+          <div className="alert-field">
+            <label className="field-label" htmlFor="alert-threshold">Уведомлять при изменении</label>
+            <div className="alert-mode-switch" role="radiogroup" aria-label="Тип порога уведомления">
+              <button type="button" role="radio" aria-checked={alertMode === "amount"} className={alertMode === "amount" ? "selected" : ""} onClick={() => { setAlertMode("amount"); setError(""); }}>₽ Сумма</button>
+              <button type="button" role="radio" aria-checked={alertMode === "percent"} className={alertMode === "percent" ? "selected" : ""} onClick={() => { setAlertMode("percent"); setError(""); }}>% Процент</button>
             </div>
-            <div className="alert-field">
-              <label className="field-label" htmlFor="alert-threshold">Уведомлять при изменении</label>
-              <div className="alert-mode-switch" role="radiogroup" aria-label="Тип порога уведомления">
-                <button type="button" role="radio" aria-checked={alertMode === "amount"} className={alertMode === "amount" ? "selected" : ""} onClick={() => { setAlertMode("amount"); setError(""); }}>₽ Сумма</button>
-                <button type="button" role="radio" aria-checked={alertMode === "percent"} className={alertMode === "percent" ? "selected" : ""} onClick={() => { setAlertMode("percent"); setError(""); }}>% Процент</button>
-              </div>
-              <label className="price-input" htmlFor="alert-threshold">
-                <input id="alert-threshold" inputMode="decimal" value={alertThreshold} onChange={(event) => setAlertThreshold(event.target.value.replace(/[^\d,.\s]/g, ""))} placeholder={alertMode === "percent" ? "Например, 10" : "Например, 50 000"} />
-                <span>{alertMode === "percent" ? "%" : "₽"}</span>
-              </label>
-              <p className="field-hint">Считаем в обе стороны от цены на момент настройки</p>
-            </div>
+            <label className="price-input" htmlFor="alert-threshold">
+              <input id="alert-threshold" inputMode="decimal" value={alertThreshold} onChange={(event) => setAlertThreshold(event.target.value.replace(/[^\d,.\s]/g, ""))} placeholder={alertMode === "percent" ? "Например, 10" : "Например, 50 000"} />
+              <span>{alertMode === "percent" ? "%" : "₽"}</span>
+            </label>
+            <p className="field-hint">Считаем в обе стороны от цены на момент настройки</p>
           </div>
-          {category === "Другое" && <input className="standalone-input" value={customCategory} onChange={(event) => setCustomCategory(event.target.value)} placeholder="Название новой категории" aria-label="Новая категория" />}
 
           <span className="field-label frequency-label">Как часто проверять цену?</span>
           <div className="frequency-grid">

@@ -160,6 +160,70 @@ test("resolves an exact Ozon card through the guarded OpenRouter web-index fallb
   }
 });
 
+test("resolves a Wildberries article through the first-party catalogue and converts kopecks to rubles", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.startsWith("https://card.wb.ru/cards/v4/detail?")) {
+      assert.match(url, /nm=83811644/);
+      return Response.json({ products: [{
+        id: 83811644,
+        name: "Духи Believe me 50 мл",
+        brand: "You&World",
+        totalQuantity: 38,
+        sizes: [{ price: { basic: 175500, product: 74200 } }],
+      }] });
+    }
+    throw new Error("Unexpected outbound request: " + url);
+  };
+  try {
+    const worker = await loadWorker();
+    const response = await worker.fetch(new Request("http://localhost/api/products/resolve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input: "WB 83811644" }),
+    }), workerEnv, workerContext);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.source, "WILDBERRIES");
+    assert.equal(body.priceRub, 742);
+    assert.equal(body.name, "You&World · Духи Believe me 50 мл");
+    assert.equal(body.url, "https://www.wildberries.ru/catalog/83811644/detail.aspx");
+    assert.equal(body.needsManualPrice, false);
+    assert.equal(body.resolvedBy, "official-catalogue");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("accepts an Ozon article and reads the exact product from composer widgets", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.startsWith("https://api.ozon.ru/composer-api.bx/page/json/v2?")) {
+      return Response.json({ widgetStates: {
+        "webProductHeading-1": JSON.stringify({ title: "Игровая мышь Attack Shark R5 Ultra" }),
+        "webPrice-1": JSON.stringify({ finalPrice: "4 290 ₽" }),
+      } });
+    }
+    throw new Error("Unexpected outbound request: " + url);
+  };
+  try {
+    const worker = await loadWorker();
+    const response = await worker.fetch(new Request("http://localhost/api/products/resolve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ input: "Ozon 1948677209" }),
+    }), workerEnv, workerContext);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.source, "OZON");
+    assert.equal(body.name, "Игровая мышь Attack Shark R5 Ultra");
+    assert.equal(body.priceRub, 4290);
+    assert.equal(body.url, "https://www.ozon.ru/product/1948677209/");
+    assert.equal(body.needsManualPrice, false);
+    assert.equal(body.resolvedBy, "official-catalogue");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("rejects local and non-HTTPS arbitrary URLs before fetching", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => { throw new Error("Unsafe URL must not be fetched"); };

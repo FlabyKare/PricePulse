@@ -1,5 +1,5 @@
 import { requirePrivateTelegramAccess } from "@/lib/private-access";
-import { imageFromPage, resolveStoreProduct } from "@/lib/store-product";
+import { imageFromPage, parseMarketplaceArticle, resolveMarketplaceArticle, resolveStoreProduct } from "@/lib/store-product";
 
 import {
   findLisSkinsItem,
@@ -103,17 +103,30 @@ async function getUsdRubRate() {
 export async function POST(request: Request) {
   const accessDenied = await requirePrivateTelegramAccess(request);
   if (accessDenied) return accessDenied;
-  let body: { url?: unknown; name?: unknown };
+  let body: { input?: unknown; url?: unknown; name?: unknown };
   try { body = await request.json() as typeof body; }
-  catch { return Response.json({ error: "Передайте ссылку на товар" }, { status: 400 }); }
-  if (typeof body.url !== "string") return Response.json({ error: "Передайте ссылку на товар" }, { status: 400 });
+  catch { return Response.json({ error: "Передайте ссылку или артикул товара" }, { status: 400 }); }
+  const input = typeof body.input === "string" ? body.input.trim() : typeof body.url === "string" ? body.url.trim() : "";
+  if (!input) return Response.json({ error: "Передайте ссылку или артикул товара" }, { status: 400 });
+
+  const articleReference = parseMarketplaceArticle(input);
+  if (articleReference) {
+    try {
+      const product = await resolveMarketplaceArticle(articleReference, typeof body.name === "string" ? body.name : "");
+      if (!product) return Response.json({ error: "Товар с таким артикулом не найден" }, { status: 404 });
+      return Response.json(product, { headers: { "cache-control": "no-store" } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Не удалось проверить артикул";
+      return Response.json({ error: message }, { status: 502 });
+    }
+  }
 
   let url: URL;
   try {
-    url = new URL(body.url);
+    url = new URL(input);
     if (!/^https?:$/.test(url.protocol) || url.username || url.password) throw new Error();
   } catch {
-    return Response.json({ error: "Передайте безопасную ссылку на страницу товара" }, { status: 400 });
+    return Response.json({ error: "Укажите HTTPS-ссылку либо артикул в формате «WB 123456789» или «Ozon 123456789»" }, { status: 400 });
   }
 
   try {

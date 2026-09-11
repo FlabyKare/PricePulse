@@ -67,7 +67,7 @@ type ResolvedStoreProduct = {
   approximate: boolean;
   needsManualPrice: boolean;
   imageUrl?: string | null;
-  resolvedBy: "page-content" | "url-fallback" | "safe-fallback" | "price-index" | "official-catalogue";
+  resolvedBy: "page-content" | "url-fallback" | "safe-fallback" | "price-index" | "web-index" | "official-catalogue";
 };
 
 type Collection = {
@@ -427,6 +427,15 @@ async function resolveStoreProduct(url: string, name = "") {
   const result = await response.json() as ResolvedStoreProduct & { error?: string };
   if (!response.ok) throw new Error(result.error || "Не удалось распознать страницу магазина");
   return result;
+}
+
+function suggestedProductCategory(product: ResolvedStoreProduct | ResolvedLisProduct) {
+  if (product.source === "LIS-SKINS") return "CS2";
+  const haystack = (product.source + " " + product.name).toLocaleLowerCase("ru");
+  if (/\b(?:cs2?|counter.?strike|skin|skins|sticker|case)\b|скин|наклейк|перчатк|нож/u.test(haystack)) return "CS2";
+  if (/dns|m\.video|citilink|видеокарт|монитор|ноутбук|компьютер|телефон|смартфон|наушник|клавиатур|мышь|процессор|телевизор|роутер/u.test(haystack)) return "Техника";
+  if (/кроссов|кед|sneaker|обув/u.test(haystack)) return "Кроссовки";
+  return "Другое";
 }
 
 function withResolvedLisPrice(product: Product, resolved: ResolvedLisProduct): Product {
@@ -1336,15 +1345,72 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
   const [manualPrice, setManualPrice] = useState("");
   const [manualName, setManualName] = useState("");
   const [loading, setLoading] = useState(false);
+  const [detecting, setDetecting] = useState(false);
+  const [detectedProduct, setDetectedProduct] = useState<{ inputUrl: string; product: ResolvedStoreProduct | ResolvedLisProduct } | null>(null);
+  const [detectionMessage, setDetectionMessage] = useState("");
   const [error, setError] = useState("");
+  const nameEdited = useRef(false);
+  const priceEdited = useRef(false);
+  const categoryEdited = useRef(false);
   const lisUrlEntered = isLisSkinsUrl(url);
+
+  useEffect(() => {
+    const input = url.trim();
+    let parsedUrl: URL;
+    try {
+      parsedUrl = new URL(input);
+      if (parsedUrl.protocol !== "https:") throw new Error();
+    } catch {
+      setDetecting(false);
+      setDetectionMessage("");
+      return;
+    }
+
+    let cancelled = false;
+    const timeout = window.setTimeout(async () => {
+      setDetecting(true);
+      setDetectionMessage("Распознаём название и текущую цену…");
+      try {
+        const isLis = isLisSkinsUrl(parsedUrl.href);
+        const resolved = isLis
+          ? await resolveLisProduct(parsedUrl.href)
+          : await resolveStoreProduct(parsedUrl.href);
+        if (cancelled) return;
+        setDetectedProduct({ inputUrl: parsedUrl.href, product: resolved });
+        if (!nameEdited.current && resolved.name) setManualName(resolved.name);
+        if (!priceEdited.current && resolved.priceRub && resolved.priceRub > 0) {
+          setManualPrice(Math.round(resolved.priceRub).toLocaleString("ru-RU"));
+        }
+        if (!categoryEdited.current) {
+          const suggestion = suggestedProductCategory(resolved);
+          const available = new Set(categories.filter((item) => item !== "Все"));
+          setCategory(available.has(suggestion) ? suggestion : "Другое");
+        }
+        setDetectionMessage(resolved.priceRub
+          ? "Готово: название и цена подставлены автоматически"
+          : "Название найдено, но магазин не отдал цену — её можно указать вручную");
+      } catch {
+        if (!cancelled) {
+          setDetectedProduct(null);
+          setDetectionMessage("Магазин не отдал данные автоматически — заполните название и цену вручную");
+        }
+      } finally {
+        if (!cancelled) setDetecting(false);
+      }
+    }, 650);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [url, categories]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
     let parsedUrl: URL;
     try {
       parsedUrl = new URL(url);
-      if (!/^https?:$/.test(parsedUrl.protocol)) throw new Error();
+      if (parsedUrl.protocol !== "https:") throw new Error();
     } catch {
       setError("Вставьте полную ссылку на страницу товара");
       return;
@@ -1372,11 +1438,14 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
     setLoading(true);
     setError("");
     try {
-      let resolved: ResolvedStoreProduct | ResolvedLisProduct | null = null;
-      try {
-        resolved = isLis ? await resolveLisProduct(parsedUrl.href) : await resolveStoreProduct(parsedUrl.href, manualName.trim());
-      } catch (resolveError) {
-        if (isLis) throw resolveError;
+      let resolved: ResolvedStoreProduct | ResolvedLisProduct | null =
+        detectedProduct?.inputUrl === parsedUrl.href ? detectedProduct.product : null;
+      if (!resolved) {
+        try {
+          resolved = isLis ? await resolveLisProduct(parsedUrl.href) : await resolveStoreProduct(parsedUrl.href, manualName.trim());
+        } catch (resolveError) {
+          if (isLis) throw resolveError;
+        }
       }
 
       const source = resolved?.source ?? parsedUrl.hostname.replace(/^www\./, "").toUpperCase();
@@ -1427,7 +1496,7 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
           note: isLis && resolved
             ? `Официальный каталог · ${resolved.count} ${resolved.count === 1 ? "предложение" : "предложения"}`
             : resolvedPrice
-              ? "Название и цена распознаны со страницы магазина"
+              ? "Название и цена распознаны автоматически"
               : resolved
                 ? "Название распознано · цена указана вручную"
                 : "Название и цена указаны вручную",
@@ -1450,24 +1519,40 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
         <p className="modal-lead">Вставьте ссылку — распознаем товар и начнём следить за ценой.</p>
         <form onSubmit={submit}>
           <label className="field-label" htmlFor="product-url">Ссылка на товар</label>
-          <label className="url-field" htmlFor="product-url"><span>↗</span><input id="product-url" type="url" value={url} onChange={(event) => { setUrl(event.target.value); setError(""); }} placeholder="https://lis-skins.com/market/..." /></label>
-          <p className="field-hint">LIS-SKINS распознаётся по официальному каталогу, остальные товары — по публичной странице магазина</p>
+          <label className="url-field" htmlFor="product-url"><span>↗</span><input id="product-url" type="url" value={url} onChange={(event) => {
+            setUrl(event.target.value);
+            setDetectedProduct(null);
+            setDetectionMessage("");
+            setManualName("");
+            setManualPrice("");
+            nameEdited.current = false;
+            priceEdited.current = false;
+            categoryEdited.current = false;
+            setError("");
+          }} placeholder="https://www.ozon.ru/product/..." /></label>
+          <p className="field-hint">Поддерживаются Ozon, DNS и товары с любой публичной HTTPS-страницы. Название и цену подставим сами.</p>
+          {url && detectionMessage && (
+            <p className={"resolve-status " + (detecting ? "pending" : detectedProduct?.product.priceRub ? "success" : "manual")} aria-live="polite">
+              <span aria-hidden="true">{detecting ? "↻" : detectedProduct?.product.priceRub ? "✓" : "!"}</span>
+              {detectionMessage}
+            </p>
+          )}
 
           {!lisUrlEntered && url && (
             <div className="manual-price-field">
-              <label className="field-label" htmlFor="manual-name">Название товара <span className="optional-label">если не распознается</span></label>
-              <input id="manual-name" className="standalone-input product-name-fallback" value={manualName} onChange={(event) => setManualName(event.target.value)} placeholder="Например, Apple AirPods Pro 2" />
-              <label className="field-label manual-price-label" htmlFor="manual-price">Текущая цена <span className="optional-label">если не определится</span></label>
-              <label className="price-input" htmlFor="manual-price"><input id="manual-price" inputMode="decimal" value={manualPrice} onChange={(event) => setManualPrice(event.target.value.replace(/[^\d,.\s]/g, ""))} placeholder="Например, 4 500" /><span>₽</span></label>
-              <p className="field-hint">PricePulse читает структурированную цену с любой публичной HTTPS-страницы. Для DNS используется резервный индекс цены при блокировке страницы.</p>
+              <label className="field-label" htmlFor="manual-name">Название товара <span className="optional-label">заполнится автоматически</span></label>
+              <input id="manual-name" className="standalone-input product-name-fallback" value={manualName} onChange={(event) => { nameEdited.current = true; setManualName(event.target.value); }} placeholder={detecting ? "Определяем название…" : "Например, Apple AirPods Pro 2"} />
+              <label className="field-label manual-price-label" htmlFor="manual-price">Текущая цена <span className="optional-label">заполнится автоматически</span></label>
+              <label className="price-input" htmlFor="manual-price"><input id="manual-price" inputMode="decimal" value={manualPrice} onChange={(event) => { priceEdited.current = true; setManualPrice(event.target.value.replace(/[^\d,.\s]/g, "")); }} placeholder={detecting ? "Определяем цену…" : "Например, 4 500"} /><span>₽</span></label>
+              <p className="field-hint">Поля остаются редактируемыми на случай, если магазин скрывает данные от внешних сервисов.</p>
             </div>
           )}
 
           <div className="form-grid">
             <div>
               <span className="field-label">Категория</span>
-              <select value={category} onChange={(event) => setCategory(event.target.value)} aria-label="Категория товара">
-                {categories.map((item) => <option key={item}>{item}</option>)}
+              <select value={category} onChange={(event) => { categoryEdited.current = true; setCategory(event.target.value); }} aria-label="Категория товара">
+                {categories.filter((item) => item !== "Все" && item !== "Другое").map((item) => <option key={item}>{item}</option>)}
                 <option value="Другое">Другое</option>
               </select>
             </div>
@@ -1501,7 +1586,7 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
           </label>
           {error && <p className="form-error" role="alert">{error}</p>}
           <div className="smart-note"><span>✦</span><p><b>Точный порог</b><br />Сообщим только когда цена изменится на заданную сумму или процент. После уведомления отсчёт начнётся заново.</p></div>
-          <button className="primary-button" type="submit" disabled={loading}>{loading ? "Распознаём товар…" : "Начать мониторинг"} <span>→</span></button>
+          <button className="primary-button" type="submit" disabled={loading || detecting}>{loading || detecting ? "Распознаём товар…" : "Начать мониторинг"} <span>→</span></button>
         </form>
       </section>
     </div>

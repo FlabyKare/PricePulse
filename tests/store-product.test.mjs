@@ -46,6 +46,7 @@ test("resolves a product from generic JSON-LD on an arbitrary public HTTPS store
 
 test("resolves and monitors a DNS short product URL through the exact price index fallback", async () => {
   const originalFetch = globalThis.fetch;
+  let indexQuery = "";
   const shortUrl = "https://www.dns-shop.ru/product/b58aaa7e00a9d582";
   const productUrl = "https://www.dns-shop.ru/product/b58aaa7e00a9d582/videokarta-palit-geforce-rtx-5070-infinity-3-ne75070019k9-gb2050s/";
   globalThis.fetch = async (input) => {
@@ -61,6 +62,7 @@ test("resolves and monitors a DNS short product URL through the exact price inde
       });
     }
     if (url.startsWith("https://pcstonks.com/catalog/?name=")) {
+      indexQuery = new URL(url).searchParams.get("name") ?? "";
       return new Response('<html><body><article><a href="/catalog/16016-videokarta-palit-geforce-rtx-5070-infinity-3">Видеокарта Palit GeForce RTX 5070 Infinity 3 [NE75070019K9-GB2050S]</a></article></body></html>', {
         headers: { "content-type": "text/html; charset=utf-8" },
       });
@@ -87,7 +89,57 @@ test("resolves and monitors a DNS short product URL through the exact price inde
     assert.equal(body.priceRub, 86999);
     assert.equal(body.needsManualPrice, false);
     assert.equal(body.resolvedBy, "price-index");
+    assert.match(indexQuery, /palit geforce rtx 5070 infinity 3/i);
+    assert.doesNotMatch(indexQuery, /ne75070019k9/i);
   } finally { globalThis.fetch = originalFetch; }
+});
+
+test("resolves an exact Ozon card through the guarded OpenRouter web-index fallback", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.OPENROUTER_API_KEY;
+  const productUrl = "https://www.ozon.ru/product/attack-shark-igrovaya-mysh-besprovodnaya-attack-shark-r5-ultra-chernyy-matovyy-1948677209/";
+  process.env.OPENROUTER_API_KEY = "test-key";
+  globalThis.fetch = async (input, init = {}) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url === productUrl) return new Response("Forbidden", { status: 403 });
+    if (url === "https://r.jina.ai/" + productUrl) return new Response("Unavailable", { status: 451 });
+    if (url === "https://openrouter.ai/api/v1/chat/completions") {
+      const request = JSON.parse(String(init.body));
+      assert.equal(request.tools[0].type, "openrouter:web_search");
+      assert.deepEqual(request.tools[0].parameters.allowed_domains, ["ozon.ru"]);
+      return Response.json({
+        choices: [{
+          message: {
+            content: JSON.stringify({
+              name: "Беспроводная игровая мышь Attack Shark R5 Ultra",
+              price_rub: 4290,
+              matched_url: productUrl,
+            }),
+          },
+        }],
+      });
+    }
+    throw new Error("Unexpected outbound request: " + url);
+  };
+  try {
+    const worker = await loadWorker();
+    const response = await worker.fetch(new Request("http://localhost/api/products/resolve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: productUrl }),
+    }), { ...workerEnv, OPENROUTER_API_KEY: "test-key" }, workerContext);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.source, "OZON");
+    assert.equal(body.name, "Беспроводная игровая мышь Attack Shark R5 Ultra");
+    assert.equal(body.priceRub, 4290);
+    assert.equal(body.needsManualPrice, false);
+    assert.equal(body.resolvedBy, "web-index");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
+    else process.env.OPENROUTER_API_KEY = originalKey;
+  }
 });
 
 test("rejects local and non-HTTPS arbitrary URLs before fetching", async () => {

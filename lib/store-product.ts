@@ -7,8 +7,10 @@ export type ResolvedStoreProduct = {
   approximate: boolean;
   needsManualPrice: boolean;
   imageUrl: string | null;
-  resolvedBy: "page-content" | "url-fallback" | "safe-fallback" | "price-index";
+  resolvedBy: "page-content" | "url-fallback" | "safe-fallback" | "price-index" | "web-index";
 };
+
+type RuntimeEnv = { OPENROUTER_API_KEY?: string; OPENROUTER_MODEL?: string; WEBAPP_URL?: string };
 
 type StoreDefinition = { source: string; domains: string[] };
 
@@ -37,6 +39,7 @@ const REQUEST_HEADERS = {
 };
 
 const dnsCanonicalCache = new Map<string, { url: string; expiresAt: number }>();
+const webIndexCache = new Map<string, { name: string; priceRub: number; expiresAt: number }>();
 
 function clean(value: string, limit = 180) {
   return value
@@ -278,6 +281,10 @@ function dnsSearchTerm(productUrl: URL, productName: string) {
   const slug = productUrl.pathname.split("/").filter(Boolean).at(-1) ?? "";
   const parts = slug.split("-").filter(Boolean);
   const codeIndex = parts.findLastIndex((part) => part.length >= 8 && /[a-z]/i.test(part) && /\d/.test(part));
+  if (codeIndex > 1) {
+    const descriptiveName = parts.slice(0, codeIndex).join(" ").replace(/\b(?:videokarta|\u0432\u0438\u0434\u0435\u043e\u043a\u0430\u0440\u0442\u0430)\b/giu, " ");
+    if (clean(descriptiveName)) return clean(descriptiveName);
+  }
   if (codeIndex >= 0) return parts.slice(codeIndex).join("-");
   return clean(productName.replace(/\b(?:videokarta|видеокарта)\b/giu, " "));
 }
@@ -344,6 +351,91 @@ async function readerFallback(url: URL) {
   } catch { return null; }
 }
 
+function openRouterContent(payload: unknown) {
+  if (!payload || typeof payload !== "object") return "";
+  const choices = (payload as { choices?: unknown }).choices;
+  if (!Array.isArray(choices) || !choices[0] || typeof choices[0] !== "object") return "";
+  const message = (choices[0] as { message?: unknown }).message;
+  if (!message || typeof message !== "object") return "";
+  const content = (message as { content?: unknown }).content;
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.flatMap((part) =>
+    part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string"
+      ? [(part as { text: string }).text]
+      : []
+  ).join("");
+}
+
+function sameProductIdentity(expected: URL, candidateValue: string) {
+  try {
+    const candidate = new URL(candidateValue);
+    if (hostWithoutWww(candidate.hostname) !== hostWithoutWww(expected.hostname)) return false;
+    const expectedPath = expected.pathname.replace(/\/+$/, "").toLocaleLowerCase("en");
+    const candidatePath = candidate.pathname.replace(/\/+$/, "").toLocaleLowerCase("en");
+    if (expectedPath === candidatePath) return true;
+    const expectedIds = expectedPath.match(/\d{7,}|[a-f0-9]{16}/gi) ?? [];
+    return expectedIds.some((id) => candidatePath.includes(id));
+  } catch { return false; }
+}
+
+async function webIndexFallback(url: URL, fallbackName: string) {
+  const cached = webIndexCache.get(url.href);
+  if (cached && cached.expiresAt > Date.now()) return cached;
+  const runtime = process.env as RuntimeEnv;
+  const apiKey = runtime.OPENROUTER_API_KEY?.trim();
+  if (!apiKey) return null;
+  try {
+    const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer " + apiKey,
+        "content-type": "application/json",
+        "http-referer": runtime.WEBAPP_URL?.trim() || "https://pricepulse-app.bokcerkbr.chatgpt.site",
+        "x-title": "PricePulse Product Resolver",
+      },
+      body: JSON.stringify({
+        model: runtime.OPENROUTER_MODEL?.trim() || "openai/gpt-4o-mini",
+        temperature: 0,
+        max_tokens: 300,
+        max_tool_calls: 1,
+        provider: { zdr: true, data_collection: "deny", allow_fallbacks: false },
+        response_format: { type: "json_object" },
+        tools: [{
+          type: "openrouter:web_search",
+          parameters: {
+            engine: "exa",
+            max_results: 5,
+            allowed_domains: [hostWithoutWww(url.hostname)],
+          },
+        }],
+        messages: [
+          {
+            role: "system",
+            content: "Find exactly the product card identified by the supplied URL in the public web index. Never substitute a similar product or invent a price. Return only JSON: {\"name\":\"exact product name\",\"price_rub\":12345,\"matched_url\":\"URL of the same exact product card\"}. If the exact card and current RUB price cannot both be confirmed, return empty values.",
+          },
+          { role: "user", content: JSON.stringify({ url: url.href, fallback_name: fallbackName }) },
+        ],
+      }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (!response.ok) return null;
+    const raw = openRouterContent(await response.json());
+    const firstBrace = raw.indexOf("{");
+    const lastBrace = raw.lastIndexOf("}");
+    if (firstBrace < 0 || lastBrace <= firstBrace) return null;
+    const parsed = JSON.parse(raw.slice(firstBrace, lastBrace + 1)) as { name?: unknown; price_rub?: unknown; matched_url?: unknown };
+    const priceRub = priceNumber(parsed.price_rub);
+    const name = typeof parsed.name === "string" ? clean(parsed.name) : "";
+    const matchedUrl = typeof parsed.matched_url === "string" ? parsed.matched_url : "";
+    if (!priceRub || !name || !sameProductIdentity(url, matchedUrl)) return null;
+    const result = { name, priceRub, expiresAt: Date.now() + 30 * 60_000 };
+    webIndexCache.set(url.href, result);
+    return result;
+  } catch { return null; }
+}
+
 export async function resolveStoreProduct(url: URL, requestedName = ""): Promise<ResolvedStoreProduct> {
   assertSafePublicProductUrl(url);
   const source = sourceFor(url);
@@ -379,6 +471,15 @@ export async function resolveStoreProduct(url: URL, requestedName = ""): Promise
       source, name: reader.name || pageName || fallbackName, url: finalUrl.href, priceRub: reader.priceRub, count: 1,
       approximate: true, needsManualPrice: false, imageUrl: page ? imageFromPage(page.html, finalUrl.href) : null,
       resolvedBy: "price-index",
+    };
+  }
+
+  const indexed = await webIndexFallback(finalUrl, pageName || fallbackName);
+  if (indexed) {
+    return {
+      source, name: indexed.name, url: finalUrl.href, priceRub: indexed.priceRub, count: 1,
+      approximate: true, needsManualPrice: false, imageUrl: page ? imageFromPage(page.html, finalUrl.href) : null,
+      resolvedBy: "web-index",
     };
   }
 

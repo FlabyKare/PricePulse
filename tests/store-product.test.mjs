@@ -44,9 +44,8 @@ test("resolves a product from generic JSON-LD on an arbitrary public HTTPS store
   } finally { globalThis.fetch = originalFetch; }
 });
 
-test("resolves and monitors a DNS short product URL through the exact price index fallback", async () => {
+test("resolves the exact DNS product but never substitutes a stale third-party price", async () => {
   const originalFetch = globalThis.fetch;
-  let indexQuery = "";
   const shortUrl = "https://www.dns-shop.ru/product/b58aaa7e00a9d582";
   const productUrl = "https://www.dns-shop.ru/product/b58aaa7e00a9d582/videokarta-palit-geforce-rtx-5070-infinity-3-ne75070019k9-gb2050s/";
   globalThis.fetch = async (input) => {
@@ -61,14 +60,8 @@ test("resolves and monitors a DNS short product URL through the exact price inde
         status: 401, headers: { "content-type": "text/html; charset=utf-8" },
       });
     }
-    if (url.startsWith("https://pcstonks.com/catalog/?name=")) {
-      indexQuery = new URL(url).searchParams.get("name") ?? "";
-      return new Response('<html><body><article><a href="/catalog/16016-videokarta-palit-geforce-rtx-5070-infinity-3">Видеокарта Palit GeForce RTX 5070 Infinity 3 [NE75070019K9-GB2050S]</a></article></body></html>', {
-        headers: { "content-type": "text/html; charset=utf-8" },
-      });
-    }
-    if (url === "https://pcstonks.com/catalog/16016-videokarta-palit-geforce-rtx-5070-infinity-3") {
-      return new Response('<html><head><title>Видеокарта Palit GeForce RTX 5070 Infinity 3 - PCstonks</title></head><body><div>Цена</div><div>86 999 &#8381;</div></body></html>', {
+    if (url === "https://r.jina.ai/" + productUrl) {
+      return new Response("Title: Видеокарта Palit GeForce RTX 5070 Infinity 3 [NE75070019K9-GB2050S] | DNS\n\nЦена зависит от выбранного города.", {
         headers: { "content-type": "text/html; charset=utf-8" },
       });
     }
@@ -86,11 +79,36 @@ test("resolves and monitors a DNS short product URL through the exact price inde
     assert.equal(body.source, "DNS");
     assert.match(body.name, /Palit GeForce RTX 5070 Infinity 3/i);
     assert.equal(body.url, productUrl);
-    assert.equal(body.priceRub, 86999);
-    assert.equal(body.needsManualPrice, false);
-    assert.equal(body.resolvedBy, "price-index");
-    assert.match(indexQuery, /palit geforce rtx 5070 infinity 3/i);
-    assert.doesNotMatch(indexQuery, /ne75070019k9/i);
+    assert.equal(body.priceRub, null);
+    assert.equal(body.needsManualPrice, true);
+    assert.equal(body.resolvedBy, "reader-content");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("recognizes the requested DNS monitor title even when DNS hides its regional price", async () => {
+  const originalFetch = globalThis.fetch;
+  const productUrl = "https://www.dns-shop.ru/product/7b1f39f10b79ce2e/27-monitor-ardor-gaming-infinity-pro-aq27h1-cernyj/";
+  globalThis.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url === productUrl) return new Response("Qrator challenge", { status: 401 });
+    if (url === "https://r.jina.ai/" + productUrl) return new Response("Unavailable", { status: 451 });
+    throw new Error("Unexpected outbound request: " + url);
+  };
+  try {
+    const worker = await loadWorker();
+    const response = await worker.fetch(new Request("http://localhost/api/products/resolve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: productUrl }),
+    }), workerEnv, workerContext);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.source, "DNS");
+    assert.equal(body.name, '27" Монитор ARDOR GAMING INFINITY PRO AQ27H1 черный');
+    assert.equal(body.url, productUrl);
+    assert.equal(body.priceRub, null);
+    assert.equal(body.needsManualPrice, true);
+    assert.equal(body.resolvedBy, "safe-fallback");
   } finally { globalThis.fetch = originalFetch; }
 });
 

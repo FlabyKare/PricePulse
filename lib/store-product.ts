@@ -7,7 +7,7 @@ export type ResolvedStoreProduct = {
   approximate: boolean;
   needsManualPrice: boolean;
   imageUrl: string | null;
-  resolvedBy: "page-content" | "url-fallback" | "safe-fallback" | "price-index" | "web-index";
+  resolvedBy: "page-content" | "reader-content" | "url-fallback" | "safe-fallback" | "web-index";
 };
 
 type RuntimeEnv = { OPENROUTER_API_KEY?: string; OPENROUTER_MODEL?: string; WEBAPP_URL?: string };
@@ -87,7 +87,47 @@ function sourceFor(url: URL) {
   return storeFor(url)?.source ?? hostWithoutWww(url.hostname).split(".")[0]!.toLocaleUpperCase("ru").slice(0, 32);
 }
 
+function inferredDnsNameFromUrl(url: URL) {
+  const slug = url.pathname.split("/").filter(Boolean).at(-1) ?? "";
+  const words = slug.replace(/\.(?:html?|aspx?)$/i, "").split("-").filter(Boolean);
+  if (!words.length) return "";
+  const translated: Record<string, string> = {
+    monitor: "Монитор",
+    videokarta: "Видеокарта",
+    noutbuk: "Ноутбук",
+    televizor: "Телевизор",
+    smartfon: "Смартфон",
+    nausniki: "Наушники",
+    klaviatura: "Клавиатура",
+    mys: "Мышь",
+    cernyj: "черный",
+    belyj: "белый",
+    seryj: "серый",
+    serebristyj: "серебристый",
+    igrovoj: "игровой",
+    besprovodnoj: "беспроводной",
+    ardor: "ARDOR",
+    gaming: "GAMING",
+    infinity: "INFINITY",
+    pro: "PRO",
+    palit: "Palit",
+    geforce: "GeForce",
+    rtx: "RTX",
+  };
+  const formatted = words.map((word, index) => {
+    if (index === 0 && /^\d{2}$/.test(word) && translated[words[1] ?? ""] === "Монитор") return `${word}"`;
+    if (translated[word]) return translated[word];
+    if (/\d/.test(word)) return word.toLocaleUpperCase("en");
+    return word.charAt(0).toLocaleUpperCase("ru") + word.slice(1);
+  });
+  return clean(formatted.join(" "));
+}
+
 export function inferredNameFromUrl(url: URL) {
+  if (sourceFor(url) === "DNS") {
+    const dnsName = inferredDnsNameFromUrl(url);
+    if (dnsName) return dnsName;
+  }
   const generic = /^(?:product|products|catalog|catalogue|item|detail|details|search|p|shop|store|index|default|detail\.aspx)$/i;
   for (const raw of url.pathname.split("/").filter(Boolean).reverse()) {
     let part = clean(decodeURIComponent(raw), 160)
@@ -140,6 +180,15 @@ export function imageFromPage(html: string, baseUrl: string) {
   return rawImage ? safeImageUrl(rawImage, baseUrl) : null;
 }
 
+function normalizedProductTitle(value: string) {
+  return clean(decodeEntities(value))
+    .replace(/^Купить\s+/i, "")
+    .replace(/\s+в\s+интернет-магазине\s+DNS(?:\.|$).*$/i, "")
+    .replace(/\s*(?:\||—|–|-)+\s*(?:Ozon|Wildberries|Яндекс Маркет|DNS|М\.Видео|Ситилинк|Lamoda|Avito).*$/i, "")
+    .replace(/\s+(?:купить|цена|отзывы)\b.*$/i, "")
+    .trim();
+}
+
 export function titleFromPage(html: string) {
   const candidates = [
     metaContent(html, "og:title"),
@@ -148,10 +197,7 @@ export function titleFromPage(html: string) {
     html.match(/"name"\s*:\s*"([^"\\]{3,180})"/i)?.[1],
   ].filter((value): value is string => Boolean(value));
   for (const candidate of candidates) {
-    const title = clean(decodeEntities(candidate))
-      .replace(/\s*(?:\||—|–|-)+\s*(?:Ozon|Wildberries|Яндекс Маркет|DNS|М\.Видео|Ситилинк|Lamoda|Avito).*$/i, "")
-      .replace(/\s+(?:купить|цена|отзывы)\b.*$/i, "")
-      .trim();
+    const title = normalizedProductTitle(candidate);
     if (title.length >= 3 && !/^(?:ozon|wildberries|яндекс маркет|dns)$/i.test(title)) return title;
   }
   return "";
@@ -277,64 +323,6 @@ async function resolveDnsCanonicalUrl(url: URL) {
   } catch { return url; }
 }
 
-function dnsSearchTerm(productUrl: URL, productName: string) {
-  const slug = productUrl.pathname.split("/").filter(Boolean).at(-1) ?? "";
-  const parts = slug.split("-").filter(Boolean);
-  const codeIndex = parts.findLastIndex((part) => part.length >= 8 && /[a-z]/i.test(part) && /\d/.test(part));
-  if (codeIndex > 1) {
-    const descriptiveName = parts.slice(0, codeIndex).join(" ").replace(/\b(?:videokarta|\u0432\u0438\u0434\u0435\u043e\u043a\u0430\u0440\u0442\u0430)\b/giu, " ");
-    if (clean(descriptiveName)) return clean(descriptiveName);
-  }
-  if (codeIndex >= 0) return parts.slice(codeIndex).join("-");
-  return clean(productName.replace(/\b(?:videokarta|видеокарта)\b/giu, " "));
-}
-
-async function pcStonksCandidates(query: string) {
-  const search = new URL("https://pcstonks.com/catalog/");
-  search.searchParams.set("name", query);
-  const response = await fetch(search, { headers: REQUEST_HEADERS, cache: "no-store", signal: AbortSignal.timeout(12_000) });
-  if (!response.ok) return [];
-  const html = (await response.text()).slice(0, 750_000);
-  const matches = [...html.matchAll(/href=["'](\/catalog\/\d+-[^"'#?]+)["']/gi)];
-  const candidates: Array<{ url: URL; context: string }> = [];
-  const seen = new Set<string>();
-  for (const match of matches) {
-    const url = new URL(match[1], search);
-    if (seen.has(url.href)) continue;
-    seen.add(url.href);
-    const start = Math.max(0, (match.index ?? 0) - 300);
-    const context = clean(decodeEntities(html.slice(start, (match.index ?? 0) + 1_500)), 1_500);
-    if (likelySameProduct(query, context)) candidates.push({ url, context });
-  }
-  return candidates.slice(0, 5);
-}
-
-function comparableTokens(value: string) {
-  return new Set(value.toLocaleLowerCase("ru").match(/[a-zа-яё0-9]{4,}/giu)?.filter((token) => !/^(?:videokarta|видеокарта|купить|цена|товар|dns|shop)$/.test(token)) ?? []);
-}
-
-function likelySameProduct(expected: string, actual: string) {
-  const left = comparableTokens(expected);
-  const right = comparableTokens(actual);
-  const shared = [...left].filter((token) => right.has(token));
-  const hasSpecificCode = shared.some((token) => /[a-zа-яё]/iu.test(token) && /\d/u.test(token) && token.length >= 7);
-  return hasSpecificCode || shared.length >= Math.min(3, Math.max(2, left.size));
-}
-
-async function resolveDnsViaPriceIndex(productUrl: URL, productName: string) {
-  const queryName = dnsSearchTerm(productUrl, productName || inferredNameFromUrl(productUrl));
-  if (!queryName) return null;
-  for (const candidate of await pcStonksCandidates(queryName)) {
-    try {
-      const indexed = await fetchPage(candidate.url, 2);
-      const name = titleFromPage(indexed.html) || candidate.context;
-      const priceRub = rubPriceFromText(indexed.html);
-      if (priceRub && likelySameProduct(queryName, `${name} ${candidate.context}`)) return { name, priceRub };
-    } catch { /* Try another exact index result. */ }
-  }
-  return null;
-}
-
 async function readerFallback(url: URL) {
   try {
     const response = await fetch(`https://r.jina.ai/${url.href}`, {
@@ -344,9 +332,9 @@ async function readerFallback(url: URL) {
     });
     if (!response.ok) return null;
     const text = (await response.text()).slice(0, 500_000);
+    const name = normalizedProductTitle(text.match(/^Title:\s*(.+)$/mi)?.[1] ?? text.match(/^#\s+(.+)$/m)?.[1] ?? "");
     const priceRub = rubPriceFromText(text);
-    if (!priceRub) return null;
-    const name = clean(text.match(/^Title:\s*(.+)$/mi)?.[1] ?? text.match(/^#\s+(.+)$/m)?.[1] ?? "");
+    if (!name && !priceRub) return null;
     return { name, priceRub };
   } catch { return null; }
 }
@@ -454,23 +442,24 @@ export async function resolveStoreProduct(url: URL, requestedName = ""): Promise
     };
   }
 
-  if (source === "DNS") {
-    const indexed = await resolveDnsViaPriceIndex(finalUrl, pageName || fallbackName);
-    if (indexed) {
-      return {
-        source, name: indexed.name || pageName || fallbackName, url: finalUrl.href, priceRub: indexed.priceRub, count: 1,
-        approximate: true, needsManualPrice: false, imageUrl: page ? imageFromPage(page.html, finalUrl.href) : null,
-        resolvedBy: "price-index",
-      };
-    }
-  }
-
   const reader = await readerFallback(finalUrl);
-  if (reader) {
+  if (reader?.priceRub) {
     return {
       source, name: reader.name || pageName || fallbackName, url: finalUrl.href, priceRub: reader.priceRub, count: 1,
       approximate: true, needsManualPrice: false, imageUrl: page ? imageFromPage(page.html, finalUrl.href) : null,
-      resolvedBy: "price-index",
+      resolvedBy: "reader-content",
+    };
+  }
+
+  // DNS serves region-specific prices behind an anti-bot session. A cached price from
+  // another catalogue can be a different region or simply stale, so never present it
+  // as the current DNS price. Preserve the exact official title and let the user enter
+  // the visible price until a live first-party page response is available.
+  if (source === "DNS") {
+    return {
+      source, name: reader?.name || pageName || fallbackName, url: finalUrl.href, priceRub: null, count: 1,
+      approximate: false, needsManualPrice: true, imageUrl: page ? imageFromPage(page.html, finalUrl.href) : null,
+      resolvedBy: reader?.name ? "reader-content" : pageName ? "url-fallback" : "safe-fallback",
     };
   }
 

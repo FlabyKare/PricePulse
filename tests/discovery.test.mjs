@@ -114,6 +114,8 @@ test("filters monitor accessories and low-quality listings before ranking", asyn
     const url = input instanceof Request ? input.url : String(input);
     if (url.includes("search.wb.ru")) {
       assert.equal(new URL(url).searchParams.get("query"), "Монитор");
+      if (url.includes("/exactmatch/ru/")) return new Response("Too Many Requests", { status: 429 });
+      assert.match(url, /\/exactmatch\/sng\//);
       return Response.json({ products: [
         {
           id: 910000001,
@@ -165,6 +167,48 @@ test("filters monitor accessories and low-quality listings before ranking", asyn
     assert.match(body.summary, /Аксессуары.*ниже 4,5/);
   } finally { globalThis.fetch = originalFetch; }
 });
+
+test("finds real monitors in Yandex Market JSON-LD when Wildberries blocks both catalogue regions", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.includes("search.wb.ru")) return new Response("Forbidden", { status: 403 });
+    if (url.startsWith("https://market.yandex.ru/search")) {
+      assert.equal(new URL(url).searchParams.get("text"), "Монитор");
+      return new Response(`<!doctype html><script type="application/ld+json">${JSON.stringify({
+        "@context": "https://schema.org",
+        "@type": "ItemList",
+        itemListElement: [{
+          "@type": "ListItem",
+          position: 1,
+          item: {
+            "@type": "Product",
+            name: 'Монитор Hisense 24N3Q 24" 144 Гц',
+            url: "https://market.yandex.ru/card/monitor-hisense-24n3q/4718071862",
+            sku: "4730784138",
+            description: 'Диагональ 24"; IPS; 144 Гц',
+            offers: { "@type": "Offer", price: 6915, priceCurrency: "RUB" },
+            aggregateRating: { "@type": "AggregateRating", ratingValue: 4.8, ratingCount: 515 },
+          },
+        }],
+      })}</script>`, { headers: { "content-type": "text/html; charset=utf-8" } });
+    }
+    if (url.includes("html.duckduckgo.com")) return new Response("");
+    if (url.includes("s.jina.ai")) return Response.json({ data: [] });
+    throw new Error("Unexpected URL: " + url);
+  };
+  try {
+    const response = await discover({ query: "Монитор", externalSearchConsent: true });
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.products.length, 1);
+    assert.match(body.products[0].name, /Hisense 24N3Q/i);
+    assert.match(body.products[0].priceLabel, /6.?915/);
+    assert.match(body.products[0].ratingLabel, /4\.8.*515 отзывов/);
+    assert.equal(body.products[0].sources[0].url, "https://market.yandex.ru/card/monitor-hisense-24n3q/4718071862");
+  } finally { globalThis.fetch = originalFetch; }
+});
+
 test("detects CS2 context and returns exact catalogue and Steam item links", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async (input) => {

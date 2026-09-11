@@ -34,9 +34,13 @@ type WbProduct = {
   salePriceU?: unknown;
   sizes?: Array<{ price?: { product?: unknown; total?: unknown } }>;
 };
+type JsonRecord = Record<string, unknown>;
 
 const LIS_EXPORT_URL = "https://lis-skins.com/market_export_json/csgo.json";
-const WB_SEARCH_URL = "https://search.wb.ru/exactmatch/ru/common/v18/search";
+const WB_SEARCH_URLS = [
+  "https://search.wb.ru/exactmatch/ru/common/v18/search",
+  "https://search.wb.ru/exactmatch/sng/common/v18/search",
+];
 const LIS_CACHE_TTL_MS = 5 * 60 * 1000;
 const MIN_RECOMMENDED_RATING = 4.5;
 const MIN_RECOMMENDED_REVIEWS = 5;
@@ -322,19 +326,26 @@ function wbPrice(product: WbProduct) {
 
 async function wildberriesCandidates(query: string): Promise<Candidate[]> {
   try {
-    const url = new URL(WB_SEARCH_URL);
-    [
-      ["ab_testing", "false"], ["appType", "1"], ["curr", "rub"], ["dest", "-1257786"],
-      ["query", query], ["resultset", "catalog"], ["sort", "popular"], ["spp", "30"], ["suppressSpellcheck", "false"],
-    ].forEach(([key, value]) => url.searchParams.set(key, value));
-    const response = await fetch(url, {
-      headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (compatible; PricePulse/2.0)" },
-      cache: "no-store",
-      signal: AbortSignal.timeout(12_000),
-    });
-    if (!response.ok) return [];
-    const payload = await response.json() as { products?: unknown; data?: { products?: unknown } };
-    const products = Array.isArray(payload.products) ? payload.products : Array.isArray(payload.data?.products) ? payload.data.products : [];
+    let products: unknown[] = [];
+    for (const endpoint of WB_SEARCH_URLS) {
+      try {
+        const url = new URL(endpoint);
+        [
+          ["ab_testing", "false"], ["appType", "1"], ["curr", "rub"], ["dest", "-1257786"], ["lang", "ru"],
+          ["query", query], ["resultset", "catalog"], ["sort", "popular"], ["spp", "30"], ["suppressSpellcheck", "false"],
+        ].forEach(([key, value]) => url.searchParams.set(key, value));
+        const response = await fetch(url, {
+          headers: { accept: "application/json", "user-agent": "Mozilla/5.0 (compatible; PricePulse/2.0)" },
+          cache: "no-store",
+          signal: AbortSignal.timeout(12_000),
+        });
+        if (!response.ok) continue;
+        const payload = await response.json() as { products?: unknown; data?: { products?: unknown } };
+        products = Array.isArray(payload.products) ? payload.products : Array.isArray(payload.data?.products) ? payload.data.products : [];
+        if (products.length) break;
+      } catch { /* Try the next live catalogue region. */ }
+    }
+    if (!products.length) return [];
     const budget = budgetFromQuery(query);
     return products.flatMap((raw) => {
       if (!raw || typeof raw !== "object") return [];
@@ -383,6 +394,90 @@ async function wildberriesCandidates(query: string): Promise<Candidate[]> {
     }).filter((candidate, position, all) =>
       all.findIndex((item) => item.name.toLocaleLowerCase("ru") === candidate.name.toLocaleLowerCase("ru") && item.priceValue === candidate.priceValue) === position
     ).slice(0, 6);
+  } catch {
+    return [];
+  }
+}
+
+function recordValue(value: unknown): JsonRecord | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : null;
+}
+
+async function yandexMarketCandidates(query: string): Promise<Candidate[]> {
+  try {
+    const url = new URL("https://market.yandex.ru/search");
+    url.searchParams.set("text", query);
+    const response = await fetch(url, {
+      headers: {
+        accept: "text/html,application/xhtml+xml",
+        "accept-language": "ru-RU,ru;q=0.9",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36",
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) return [];
+    const html = (await response.text()).slice(0, 3_000_000);
+    const scripts = [...html.matchAll(/<script[^>]+type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi)];
+    const products: JsonRecord[] = [];
+    for (const script of scripts) {
+      try {
+        const payload = JSON.parse(decodeEntities(script[1])) as unknown;
+        const root = recordValue(payload);
+        const elements = Array.isArray(root?.itemListElement) ? root.itemListElement : [];
+        for (const element of elements) {
+          const item = recordValue(recordValue(element)?.item);
+          if (item && String(item["@type"] ?? "").toLocaleLowerCase("en") === "product") products.push(item);
+        }
+      } catch { /* Ignore unrelated or malformed JSON-LD blocks. */ }
+    }
+    const budget = budgetFromQuery(query);
+    return products.flatMap((item, position) => {
+      const offers = recordValue(item.offers);
+      const aggregate = recordValue(item.aggregateRating);
+      const rawName = typeof item.name === "string" ? productName(item.name) : "";
+      const productUrl = safeUrl(typeof item.url === "string" ? item.url : offers?.url);
+      const priceValue = Number(offers?.price);
+      const ratingValue = Number(aggregate?.ratingValue);
+      const reviewCount = Number(aggregate?.ratingCount ?? aggregate?.reviewCount);
+      if (
+        !rawName
+        || !productUrl
+        || !isDirectStoreUrl(productUrl, "electronics")
+        || !Number.isFinite(priceValue)
+        || priceValue <= 0
+        || !matchesRequestedProduct(query, rawName)
+        || (budget && priceValue > budget)
+      ) return [];
+      const rating = Number.isFinite(ratingValue) && ratingValue >= 1 && ratingValue <= 5 ? ratingValue : null;
+      const reviews = Number.isInteger(reviewCount) && reviewCount >= 0 ? reviewCount : null;
+      const priceLabel = formatRub(priceValue);
+      const ratingLabel = rating
+        ? rating.toFixed(1) + (reviews !== null ? " · " + reviews.toLocaleString("ru-RU") + " отзывов" : "")
+        : reviews !== null ? reviews.toLocaleString("ru-RU") + " отзывов" : "Отзывы на странице";
+      const sku = typeof item.sku === "string" ? item.sku : String(position);
+      return [{
+        id: "ym-" + sku,
+        name: rawName,
+        description: clean(typeof item.description === "string" ? item.description : "Реальная карточка Яндекс Маркета", 180),
+        priceValue,
+        priceLabel,
+        ratingValue: rating,
+        ratingLabel,
+        reviewCount: reviews,
+        popularity: "Реальная карточка",
+        sources: [{
+          title: "Яндекс Маркет · " + rawName,
+          url: productUrl,
+          kind: "магазин" as const,
+          priceLabel,
+          ratingLabel,
+          verified: true as const,
+        }],
+      }];
+    }).filter((candidate, position, all) =>
+      all.findIndex((item) => item.sources[0]?.url === candidate.sources[0]?.url) === position
+    ).slice(0, 12);
   } catch {
     return [];
   }
@@ -712,21 +807,23 @@ export async function POST(request: Request) {
   if (intent === "cs2") {
     candidates = await lisCandidatesFor(query);
   } else {
-    const [wbResult, storeResult, reviewResult, jinaStoreResult, jinaReviewResult] = await Promise.allSettled([
+    const [wbResult, marketResult, storeResult, reviewResult, jinaStoreResult, jinaReviewResult] = await Promise.allSettled([
       wildberriesCandidates(marketQuery),
+      yandexMarketCandidates(marketQuery),
       duckSearch(marketQuery, intent, "магазин"),
       duckSearch(marketQuery, intent, "обзор"),
       jinaSearch(marketQuery, intent, "магазин"),
       jinaSearch(marketQuery, intent, "обзор"),
     ]);
     const wbItems = wbResult.status === "fulfilled" ? wbResult.value : [];
+    const marketItems = marketResult.status === "fulfilled" ? marketResult.value : [];
     const stores = [...(storeResult.status === "fulfilled" ? storeResult.value : []), ...(jinaStoreResult.status === "fulfilled" ? jinaStoreResult.value : [])]
       .filter((result, position, all) => all.findIndex((item) => item.url === result.url) === position)
       .filter((result) => matchesRequestedProduct(marketQuery, result.title));
     const reviews = [...(reviewResult.status === "fulfilled" ? reviewResult.value : []), ...(jinaReviewResult.status === "fulfilled" ? jinaReviewResult.value : [])]
       .filter((result, position, all) => all.findIndex((item) => item.url === result.url) === position)
       .filter((result) => matchesRequestedProduct(marketQuery, result.title));
-    candidates = mergeMarketCandidates(query, wbItems, stores, reviews)
+    candidates = mergeMarketCandidates(query, [...marketItems, ...wbItems], stores, reviews)
       .filter((candidate) => matchesRequestedProduct(marketQuery, candidate.name) && hasVerifiedQuality(candidate));
   }
 

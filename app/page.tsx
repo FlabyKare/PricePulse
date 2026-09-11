@@ -67,7 +67,7 @@ type ResolvedStoreProduct = {
   approximate: boolean;
   needsManualPrice: boolean;
   imageUrl?: string | null;
-  resolvedBy: "page-content" | "url-fallback" | "safe-fallback" | "price-index" | "web-index" | "official-catalogue";
+  resolvedBy: "page-content" | "reader-content" | "url-fallback" | "safe-fallback" | "web-index" | "official-catalogue";
 };
 
 type Collection = {
@@ -1388,7 +1388,9 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
         }
         setDetectionMessage(resolved.priceRub
           ? "Готово: название и цена подставлены автоматически"
-          : "Название найдено, но магазин не отдал цену — её можно указать вручную");
+          : resolved.source === "DNS"
+            ? "Товар найден. DNS скрывает региональную цену — укажите цену, которую видите на странице"
+            : "Название найдено, но магазин не отдал цену — её можно указать вручную");
       } catch {
         if (!cancelled) {
           setDetectedProduct(null);
@@ -1530,7 +1532,7 @@ function AddProductModal({ onClose, onAdd, categories }: { onClose: () => void; 
             categoryEdited.current = false;
             setError("");
           }} placeholder="https://www.ozon.ru/product/..." /></label>
-          <p className="field-hint">Поддерживаются Ozon, DNS и товары с любой публичной HTTPS-страницы. Название и цену подставим сами.</p>
+          <p className="field-hint">Поддерживаются Ozon, DNS и товары с любой публичной HTTPS-страницы. Название подставим сами; цену берём только со страницы самого магазина.</p>
           {url && detectionMessage && (
             <p className={"resolve-status " + (detecting ? "pending" : detectedProduct?.product.priceRub ? "success" : "manual")} aria-live="polite">
               <span aria-hidden="true">{detecting ? "↻" : detectedProduct?.product.priceRub ? "✓" : "!"}</span>

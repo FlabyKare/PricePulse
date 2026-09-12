@@ -1,3 +1,5 @@
+import { dnsRegionByCode } from "@/lib/dns-regions";
+
 export type ResolvedStoreProduct = {
   source: string;
   name: string;
@@ -309,9 +311,16 @@ function sameStoreRedirect(from: URL, to: URL) {
   return hostWithoutWww(from.hostname) === hostWithoutWww(to.hostname);
 }
 
-async function fetchPage(url: URL, redirectsLeft = 4): Promise<{ html: string; finalUrl: string }> {
+async function fetchPage(url: URL, redirectsLeft = 4, dnsRegionCode?: string): Promise<{ html: string; finalUrl: string }> {
+  const dnsRegion = sourceFor(url) === "DNS" ? dnsRegionByCode(dnsRegionCode) : null;
   const response = await fetch(url.href, {
-    headers: REQUEST_HEADERS,
+    headers: {
+      ...REQUEST_HEADERS,
+      ...(dnsRegion ? {
+        cookie: `city_path=${dnsRegion.code}`,
+        "x-dns-city-path": dnsRegion.code,
+      } : {}),
+    },
     cache: "no-store",
     redirect: "manual",
     signal: AbortSignal.timeout(12_000),
@@ -322,7 +331,7 @@ async function fetchPage(url: URL, redirectsLeft = 4): Promise<{ html: string; f
     const nextUrl = new URL(location, url);
     assertSafePublicProductUrl(nextUrl);
     if (!sameStoreRedirect(url, nextUrl)) throw new Error("Магазин перенаправил на другой домен");
-    return fetchPage(nextUrl, redirectsLeft - 1);
+    return fetchPage(nextUrl, redirectsLeft - 1, dnsRegionCode);
   }
   if (!response.ok) throw new Error(`Страница магазина вернула ошибку ${response.status}`);
   const type = response.headers.get("content-type") ?? "";
@@ -664,7 +673,7 @@ export async function resolveMarketplaceArticle(reference: MarketplaceArticle, r
   return resolveStoreProduct(new URL(`https://www.ozon.ru/product/${reference.article}/`), requestedName || `Товар Ozon · артикул ${reference.article}`);
 }
 
-export async function resolveStoreProduct(url: URL, requestedName = ""): Promise<ResolvedStoreProduct> {
+export async function resolveStoreProduct(url: URL, requestedName = "", dnsRegionCode?: string): Promise<ResolvedStoreProduct> {
   assertSafePublicProductUrl(url);
   const source = sourceFor(url);
   const wbArticle = wildberriesArticleFromUrl(url);
@@ -679,7 +688,7 @@ export async function resolveStoreProduct(url: URL, requestedName = ""): Promise
   }
   const canonicalUrl = source === "DNS" ? await resolveDnsCanonicalUrl(url) : url;
   let page: { html: string; finalUrl: string } | null = null;
-  try { page = await fetchPage(canonicalUrl); } catch { /* Continue with safe public fallbacks. */ }
+  try { page = await fetchPage(canonicalUrl, 4, dnsRegionCode); } catch { /* Continue with safe public fallbacks. */ }
   const finalUrl = page ? new URL(page.finalUrl) : canonicalUrl;
   const fallbackName = clean(requestedName) || inferredNameFromUrl(finalUrl) || `Товар из ${source}`;
   const pageName = page ? titleFromPage(page.html) : "";

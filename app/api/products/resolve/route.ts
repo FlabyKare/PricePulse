@@ -1,5 +1,6 @@
 import { requirePrivateTelegramAccess } from "@/lib/private-access";
 import { imageFromPage, parseMarketplaceArticle, resolveMarketplaceArticle, resolveStoreProduct } from "@/lib/store-product";
+import { dnsRegionByCode } from "@/lib/dns-regions";
 
 import {
   findLisSkinsItem,
@@ -103,7 +104,7 @@ async function getUsdRubRate() {
 export async function POST(request: Request) {
   const accessDenied = await requirePrivateTelegramAccess(request);
   if (accessDenied) return accessDenied;
-  let body: { input?: unknown; url?: unknown; name?: unknown };
+  let body: { input?: unknown; url?: unknown; name?: unknown; region?: unknown };
   try { body = await request.json() as typeof body; }
   catch { return Response.json({ error: "Передайте ссылку или артикул товара" }, { status: 400 }); }
   const input = typeof body.input === "string" ? body.input.trim() : typeof body.url === "string" ? body.url.trim() : "";
@@ -132,7 +133,11 @@ export async function POST(request: Request) {
   try {
     const isLis = /(^|\.)lis-skins\.com$/i.test(url.hostname);
     if (!isLis) {
-      const product = await resolveStoreProduct(url, typeof body.name === "string" ? body.name : "");
+      const requestedRegion = typeof body.region === "string" ? body.region : "";
+      if (requestedRegion && !dnsRegionByCode(requestedRegion)) {
+        return Response.json({ error: "Выберите регион из списка" }, { status: 400 });
+      }
+      const product = await resolveStoreProduct(url, typeof body.name === "string" ? body.name : "", requestedRegion);
       return Response.json(product, { headers: { "cache-control": "no-store" } });
     }
 

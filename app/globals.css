@@ -187,6 +187,8 @@ select:focus, .standalone-input:focus { border-color: var(--lime); box-shadow: 0
 .secondary-button { padding: 0 18px; border: 1px solid #dad8d0; background: var(--card); }
 .primary-button:disabled { opacity: .65; cursor: wait; }
 .manual-price-field { margin: 15px 0 18px; }
+.dns-region-field { margin: 15px 0 18px; }
+.dns-region-field select { font-size: 16px; }
 .product-name-fallback { margin: 0 0 15px; color: var(--ink); }
 .manual-price-label { margin-top: 2px; }
 .optional-label { color: var(--muted); font-size: 8px; font-weight: 600; text-transform: none; }
@@ -211,6 +213,11 @@ select:focus, .standalone-input:focus { border-color: var(--lime); box-shadow: 0
 .visible-price-form > p { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 8px; line-height: 1.45; }
 .visible-price-form .price-input { margin: 0; }
 .visible-price-form .form-error { grid-column: 1 / -1; margin: 0; }
+.detail-region-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(155px, 45%); align-items: center; gap: 12px; margin: 0 0 16px; padding: 12px 0 15px; border-bottom: 1px solid var(--line); }
+.detail-region-row > div { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.detail-region-row span { font-size: 11px; }
+.detail-region-row small { color: var(--muted); font-size: 8px; line-height: 1.35; }
+.detail-region-row select { height: 42px; font-size: 11px; }
 .chart-card { padding: 15px 17px 8px; border-radius: 15px; background: #1c1f1a; color: white; }
 .chart-labels { display: flex; justify-content: space-between; font-size: 9px; color: #91968a; }
 .chart-labels b { color: var(--lime); }

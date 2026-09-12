@@ -20,6 +20,7 @@ export type MonitoredProduct = {
   alertCheckPending?: boolean;
   priceCalibration?: { sourcePrice: number; visiblePrice: number };
   lastResolvedPrice?: number;
+  storeRegion?: { code: string; name: string };
   priceHistory?: MonitoredPricePoint[];
   offers?: Array<{ id: string; store: string; price: number; url: string; note: string }>;
 };

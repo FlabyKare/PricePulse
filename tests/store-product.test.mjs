@@ -112,6 +112,51 @@ test("recognizes the requested DNS monitor title even when DNS hides its regiona
   } finally { globalThis.fetch = originalFetch; }
 });
 
+test("uses the selected DNS city for the regional product price", async () => {
+  const originalFetch = globalThis.fetch;
+  const productUrl = "https://www.dns-shop.ru/product/7b1f39f10b79ce2e/27-monitor-ardor-gaming-infinity-pro-aq27h1-cernyj/";
+  globalThis.fetch = async (input, init = {}) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url === productUrl) {
+      const headers = new Headers(init.headers);
+      assert.match(headers.get("cookie") ?? "", /city_path=spb/);
+      assert.equal(headers.get("x-dns-city-path"), "spb");
+      return new Response(`<!doctype html><html><head>
+        <meta property="og:title" content='27&quot; Монитор ARDOR GAMING INFINITY PRO AQ27H1 черный | DNS'>
+        <script type="application/ld+json">{"@type":"Product","offers":{"@type":"Offer","price":"16799","priceCurrency":"RUB"}}</script>
+      </head></html>`, { headers: { "content-type": "text/html; charset=utf-8" } });
+    }
+    throw new Error("Unexpected outbound request: " + url);
+  };
+  try {
+    const worker = await loadWorker();
+    const response = await worker.fetch(new Request("http://localhost/api/products/resolve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: productUrl, region: "spb" }),
+    }), workerEnv, workerContext);
+    const body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(body.source, "DNS");
+    assert.equal(body.priceRub, 16799);
+    assert.equal(body.needsManualPrice, false);
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test("rejects an unknown DNS region instead of sending an arbitrary cookie", async () => {
+  const worker = await loadWorker();
+  const response = await worker.fetch(new Request("http://localhost/api/products/resolve", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      url: "https://www.dns-shop.ru/product/7b1f39f10b79ce2e/27-monitor-ardor-gaming-infinity-pro-aq27h1-cernyj/",
+      region: "not-a-real-region",
+    }),
+  }), workerEnv, workerContext);
+  assert.equal(response.status, 400);
+  assert.match((await response.json()).error, /регион/i);
+});
+
 test("resolves an exact Ozon card through the guarded OpenRouter web-index fallback", async () => {
   const originalFetch = globalThis.fetch;
   const originalKey = process.env.OPENROUTER_API_KEY;

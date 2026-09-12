@@ -4,6 +4,7 @@ import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { createContext, FormEvent, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { isLisSkinsUrl } from "@/lib/lis-skins";
 import { calibratedPrice } from "@/lib/price-monitor";
+import { DNS_REGIONS, dnsRegionByCode } from "@/lib/dns-regions";
 import { mergeProfileRecords } from "@/lib/profile-state";
 import { shouldDismissSheetDrag } from "@/lib/sheet-gesture";
 import { InvestmentsView, SmartDiscoveryView } from "./ai-views";
@@ -46,6 +47,7 @@ type Product = {
   alertCheckPending?: boolean;
   priceCalibration?: { sourcePrice: number; visiblePrice: number };
   lastResolvedPrice?: number;
+  storeRegion?: { code: string; name: string };
   offers?: Offer[];
 };
 
@@ -421,15 +423,22 @@ async function resolveLisProduct(url: string) {
   return result;
 }
 
-async function resolveStoreProduct(input: string, name = "") {
+async function resolveStoreProduct(input: string, name = "", region = "") {
   const response = await fetch("/api/products/resolve", {
     method: "POST",
     headers: telegramApiHeaders(true),
-    body: JSON.stringify({ input, name }),
+    body: JSON.stringify({ input, name, region }),
   });
   const result = await response.json() as ResolvedStoreProduct & { error?: string };
   if (!response.ok) throw new Error(result.error || "Не удалось распознать страницу магазина");
   return result;
+}
+
+function isDnsProductInput(input: string) {
+  try {
+    const host = new URL(input).hostname.toLocaleLowerCase("en").replace(/^www\./, "");
+    return host === "dns-shop.ru" || host.endsWith(".dns-shop.ru");
+  } catch { return false; }
 }
 
 function suggestedProductCategory(product: ResolvedStoreProduct | ResolvedLisProduct) {
@@ -978,7 +987,7 @@ export default function Home() {
         setProducts((current) => current.map((item) => item.id === id ? withResolvedLisPrice(item, resolved) : item));
         setToast(`Цена обновлена: ${formatPrice(resolved.priceRub)}`);
       } else {
-        const resolved = await resolveStoreProduct(product.url, product.name);
+        const resolved = await resolveStoreProduct(product.url, product.name, product.storeRegion?.code);
         if (!resolved.priceRub || resolved.priceRub <= 0) throw new Error("Магазин не отдал цену");
         const nextPrice = calibratedPrice(product, resolved.priceRub);
         setProducts((current) => current.map((item) => item.id === id ? withResolvedStorePrice(item, resolved) : item));
@@ -1004,7 +1013,7 @@ export default function Home() {
         if (isLisSkinsUrl(product.url)) {
           return { id: product.id, lis: await resolveLisProduct(product.url) };
         }
-        const store = await resolveStoreProduct(product.url, product.name);
+        const store = await resolveStoreProduct(product.url, product.name, product.storeRegion?.code);
         if (!store.priceRub || store.priceRub <= 0) throw new Error("Цена не распознана");
         return { id: product.id, store };
       }));
@@ -1058,6 +1067,39 @@ export default function Home() {
       haptic("medium");
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Не удалось добавить магазин");
+    }
+  }
+
+  async function updateProductRegion(id: number, regionCode: string) {
+    const region = dnsRegionByCode(regionCode);
+    const product = products.find((item) => item.id === id);
+    if (!region || !product) return;
+    window.localStorage.setItem("pricepulse-dns-region", region.code);
+    const withRegion = (item: Product): Product => item.id === id ? {
+      ...item,
+      storeRegion: region,
+      priceCalibration: undefined,
+      lastResolvedPrice: undefined,
+      nextCheck: "проверяем цену для региона…",
+    } : item;
+    setProducts((current) => current.map(withRegion));
+    setSelected((current) => current ? withRegion(current) : current);
+    setToast(`Регион DNS: ${region.name}. Проверяем цену…`);
+    try {
+      const resolved = await resolveStoreProduct(product.url, product.name, region.code);
+      if (!resolved.priceRub || resolved.priceRub <= 0) {
+        setToast(`Регион ${region.name} сохранён. DNS не отдал цену — её можно уточнить вручную`);
+        return;
+      }
+      const applyRegionPrice = (item: Product): Product => item.id === id
+        ? withResolvedStorePrice(withRegion(item), resolved)
+        : item;
+      setProducts((current) => current.map(applyRegionPrice));
+      setSelected((current) => current ? applyRegionPrice(current) : current);
+      setToast(`Цена DNS для ${region.name}: ${formatPrice(resolved.priceRub)}`);
+      haptic("medium");
+    } catch {
+      setToast(`Регион ${region.name} сохранён. Повторим проверку автоматически`);
     }
   }
   function exportProfileData() {
@@ -1268,7 +1310,7 @@ export default function Home() {
         ))}
       </nav>
 
-      {addOpen && <AddProductModal onClose={() => setAddOpen(false)} onAdd={addProduct} />}
+      {addOpen && <AddProductModal defaultDnsRegion={products.find((product) => product.source === "DNS" && product.storeRegion)?.storeRegion?.code ?? ""} onClose={() => setAddOpen(false)} onAdd={addProduct} />}
       {themeOpen && <ThemeModal palette={palette} onApply={(next) => { setPalette(next); setThemeOpen(false); setToast(`Палитра «${next.name}» включена`); }} onClose={() => setThemeOpen(false)} />}
       {collectionOpen && <CollectionModal products={products} onClose={() => setCollectionOpen(false)} onCreate={(collection) => { setCollections((current) => [collection, ...current]); setCollectionOpen(false); setToast("Подборка создана — теперь ей можно делиться"); }} />}
       {selectedCollection && (
@@ -1288,6 +1330,7 @@ export default function Home() {
           onCheck={checkPrice}
           onAddOffer={addOffer}
           onDelete={deleteProduct}
+          onRegion={updateProductRegion}
           onVisiblePrice={(id, value) => {
             const update = (product: Product) => product.id === id ? withVisibleStorePrice(product, value) : product;
             setProducts((current) => current.map(update));
@@ -1378,7 +1421,7 @@ function ProductCard({ product, onFavorite, onDelete, onOpen }: { product: Produ
   );
 }
 
-function AddProductModal({ onClose, onAdd }: { onClose: () => void; onAdd: (product: Product) => void }) {
+function AddProductModal({ onClose, onAdd, defaultDnsRegion }: { onClose: () => void; onAdd: (product: Product) => void; defaultDnsRegion: string }) {
   const [url, setUrl] = useState("");
   const [period, setPeriod] = useState(3);
   const [customPeriod, setCustomPeriod] = useState("");
@@ -1386,14 +1429,22 @@ function AddProductModal({ onClose, onAdd }: { onClose: () => void; onAdd: (prod
   const [alertThreshold, setAlertThreshold] = useState("");
   const [manualPrice, setManualPrice] = useState("");
   const [manualName, setManualName] = useState("");
+  const [dnsRegion, setDnsRegion] = useState(defaultDnsRegion);
   const [loading, setLoading] = useState(false);
   const [detecting, setDetecting] = useState(false);
-  const [detectedProduct, setDetectedProduct] = useState<{ inputValue: string; product: ResolvedStoreProduct | ResolvedLisProduct } | null>(null);
+  const [detectedProduct, setDetectedProduct] = useState<{ inputValue: string; regionCode: string; product: ResolvedStoreProduct | ResolvedLisProduct } | null>(null);
   const [detectionMessage, setDetectionMessage] = useState("");
   const [error, setError] = useState("");
   const nameEdited = useRef(false);
   const priceEdited = useRef(false);
   const lisUrlEntered = /^https:\/\//i.test(url.trim()) && isLisSkinsUrl(url.trim());
+  const dnsUrlEntered = isDnsProductInput(url.trim());
+
+  useEffect(() => {
+    if (dnsRegionByCode(defaultDnsRegion)) return;
+    const savedRegion = window.localStorage.getItem("pricepulse-dns-region");
+    if (dnsRegionByCode(savedRegion)) setDnsRegion(savedRegion!);
+  }, [defaultDnsRegion]);
 
   useEffect(() => {
     const input = url.trim();
@@ -1415,17 +1466,22 @@ function AddProductModal({ onClose, onAdd }: { onClose: () => void; onAdd: (prod
         const isLis = Boolean(parsedUrl && isLisSkinsUrl(parsedUrl.href));
         const resolved = isLis
           ? await resolveLisProduct(parsedUrl!.href)
-          : await resolveStoreProduct(input);
+          : await resolveStoreProduct(input, "", dnsUrlEntered ? dnsRegion : "");
         if (cancelled) return;
-        setDetectedProduct({ inputValue: input, product: resolved });
+        setDetectedProduct({ inputValue: input, regionCode: dnsUrlEntered ? dnsRegion : "", product: resolved });
         if (!nameEdited.current && resolved.name) setManualName(resolved.name);
         if (!priceEdited.current && resolved.priceRub && resolved.priceRub > 0) {
           setManualPrice(Math.round(resolved.priceRub).toLocaleString("ru-RU"));
         }
+        const selectedDnsRegion = dnsRegionByCode(dnsRegion);
         setDetectionMessage(resolved.priceRub
-          ? "Готово: название и цена подставлены автоматически"
+          ? selectedDnsRegion && resolved.source === "DNS"
+            ? `Готово: цена получена для региона ${selectedDnsRegion.name}`
+            : "Готово: название и цена подставлены автоматически"
           : resolved.source === "DNS"
-            ? "Товар найден. DNS скрывает региональную цену — укажите цену, которую видите на странице"
+            ? selectedDnsRegion
+              ? `Регион ${selectedDnsRegion.name} выбран, но DNS скрыл цену — её можно указать вручную`
+              : "Товар найден. Выберите город DNS, чтобы получить региональную цену"
             : resolved.source === "OZON"
               ? "Товар Ozon найден, но защита магазина не отдала цену — её можно указать вручную"
               : "Название найдено, но магазин не отдал цену — её можно указать вручную");
@@ -1443,7 +1499,7 @@ function AddProductModal({ onClose, onAdd }: { onClose: () => void; onAdd: (prod
       cancelled = true;
       window.clearTimeout(timeout);
     };
-  }, [url]);
+  }, [url, dnsRegion, dnsUrlEntered]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -1466,6 +1522,10 @@ function AddProductModal({ onClose, onAdd }: { onClose: () => void; onAdd: (prod
       return;
     }
     const isLis = Boolean(parsedUrl && isLisSkinsUrl(parsedUrl.href));
+    if (dnsUrlEntered && !dnsRegionByCode(dnsRegion)) {
+      setError("Выберите город DNS из списка");
+      return;
+    }
     const enteredPrice = Number(manualPrice.replace(/\s/g, "").replace(",", "."));
     const enteredAlert = alertThreshold ? Number(alertThreshold.replace(/\s/g, "").replace(",", ".")) : null;
     const alertLimit = alertMode === "percent" ? 100 : 100_000_000;
@@ -1484,10 +1544,10 @@ function AddProductModal({ onClose, onAdd }: { onClose: () => void; onAdd: (prod
     setError("");
     try {
       let resolved: ResolvedStoreProduct | ResolvedLisProduct | null =
-        detectedProduct?.inputValue === input ? detectedProduct.product : null;
+        detectedProduct?.inputValue === input && detectedProduct.regionCode === (dnsUrlEntered ? dnsRegion : "") ? detectedProduct.product : null;
       if (!resolved) {
         try {
-          resolved = isLis ? await resolveLisProduct(parsedUrl!.href) : await resolveStoreProduct(input, manualName.trim());
+          resolved = isLis ? await resolveLisProduct(parsedUrl!.href) : await resolveStoreProduct(input, manualName.trim(), dnsUrlEntered ? dnsRegion : "");
         } catch (resolveError) {
           if (isLis) throw resolveError;
         }
@@ -1536,6 +1596,7 @@ function AddProductModal({ onClose, onAdd }: { onClose: () => void; onAdd: (prod
         favorite: false,
         imageUrl: resolved?.imageUrl ?? undefined,
         lastResolvedPrice: resolvedPrice ?? undefined,
+        storeRegion: dnsUrlEntered ? dnsRegionByCode(dnsRegion) ?? undefined : undefined,
         priceCalibration: manuallyCorrectedPrice && resolvedPrice && manuallyCorrectedPrice !== resolvedPrice
           ? { sourcePrice: resolvedPrice, visiblePrice: manuallyCorrectedPrice }
           : undefined,
@@ -1593,6 +1654,23 @@ function AddProductModal({ onClose, onAdd }: { onClose: () => void; onAdd: (prod
             </p>
           )}
 
+          {dnsUrlEntered && (
+            <div className="dns-region-field">
+              <label className="field-label" htmlFor="dns-region">Город DNS</label>
+              <select id="dns-region" value={dnsRegion} onChange={(event) => {
+                const code = event.target.value;
+                setDnsRegion(code);
+                if (code) window.localStorage.setItem("pricepulse-dns-region", code);
+                setDetectedProduct(null);
+                setError("");
+              }}>
+                <option value="">Выберите город</option>
+                {DNS_REGIONS.map((region) => <option key={region.code} value={region.code}>{region.name}</option>)}
+              </select>
+              <p className="field-hint">DNS показывает цены по городу. Выбор сохранится для следующих товаров и синхронизируется вместе с карточкой.</p>
+            </div>
+          )}
+
           {!lisUrlEntered && url && (
             <div className="manual-price-field">
               <label className="field-label" htmlFor="manual-name">Название товара <span className="optional-label">заполнится автоматически</span></label>
@@ -1637,7 +1715,7 @@ function AddProductModal({ onClose, onAdd }: { onClose: () => void; onAdd: (prod
     </div>
   );
 }
-function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAlert, onAddOffer, onDelete, onVisiblePrice }: { product: Product; onClose: () => void; onFavorite: (id: number) => void; onCheck: (id: number) => void; onPeriod: (id: number, period: number) => void; onAlert: (id: number, settings?: PriceAlertSettings) => void; onAddOffer: (id: number, url: string) => void; onDelete: (id: number) => void; onVisiblePrice: (id: number, value: number) => void }) {
+function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAlert, onAddOffer, onDelete, onVisiblePrice, onRegion }: { product: Product; onClose: () => void; onFavorite: (id: number) => void; onCheck: (id: number) => void; onPeriod: (id: number, period: number) => void; onAlert: (id: number, settings?: PriceAlertSettings) => void; onAddOffer: (id: number, url: string) => void; onDelete: (id: number) => void; onVisiblePrice: (id: number, value: number) => void; onRegion: (id: number, code: string) => void }) {
   const formatPrice = usePriceFormatter();
   const [offerInputOpen, setOfferInputOpen] = useState(false);
   const [offerUrl, setOfferUrl] = useState("");
@@ -1767,6 +1845,15 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAle
             <button className="target-save-button" type="submit">Сохранить</button>
             {visiblePriceError && <p className="form-error" role="alert">{visiblePriceError}</p>}
           </form>
+        )}
+        {product.source === "DNS" && (
+          <div className="detail-region-row">
+            <div><span>Регион цены</span><small>Используется во всех проверках DNS</small></div>
+            <select aria-label="Регион цены DNS" value={product.storeRegion?.code ?? ""} onChange={(event) => onRegion(product.id, event.target.value)}>
+              <option value="" disabled>Выберите город</option>
+              {DNS_REGIONS.map((region) => <option key={region.code} value={region.code}>{region.name}</option>)}
+            </select>
+          </div>
         )}
         <div className="chart-card">
           <div className="chart-labels">

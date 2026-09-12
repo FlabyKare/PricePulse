@@ -80,7 +80,7 @@ async function resolvePrice(product: MonitoredProduct) {
     return { price, sourcePrice: price };
   }
   const url = new URL(product.url);
-  const resolved = await resolveStoreProduct(url, product.name);
+  const resolved = await resolveStoreProduct(url, product.name, product.storeRegion?.code);
   if (!resolved.priceRub) throw new Error("Цена не распознана");
   return { price: calibratedPrice(product, resolved.priceRub), sourcePrice: resolved.priceRub };
 }

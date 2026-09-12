@@ -2,9 +2,17 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyObservedPrice,
+  calibratedPrice,
   isPriceCheckDue,
   priceNotification,
 } from "../lib/price-monitor.ts";
+
+test("calibrates public store prices to the price visible to the user", () => {
+  const dnsProduct = { ...product, priceCalibration: { sourcePrice: 16599, visiblePrice: 16799 } };
+  assert.equal(calibratedPrice(dnsProduct, 16599), 16799);
+  assert.equal(calibratedPrice(dnsProduct, 16000), 16200);
+  assert.equal(calibratedPrice(product, 16599.4), 16599);
+});
 
 const product = {
   id: 7,
@@ -71,9 +79,10 @@ test("treats a legacy target value as an amount threshold", () => {
 });
 
 test("stores every observed price without changing the alert reference", () => {
-  const updated = applyObservedPrice(product, 4600, "2026-08-31T10:02:00.000Z");
+  const updated = applyObservedPrice(product, 4600, "2026-08-31T10:02:00.000Z", 4400);
   assert.equal(updated.price, 4600);
   assert.equal(updated.oldPrice, 5000);
   assert.equal(updated.change, -8);
   assert.equal(updated.alertReferencePrice, 5000);
+  assert.equal(updated.lastResolvedPrice, 4400);
 });

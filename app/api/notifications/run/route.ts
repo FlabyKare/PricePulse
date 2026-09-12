@@ -7,6 +7,7 @@ import { resolveStoreProduct } from "@/lib/store-product";
 import {
   applyObservedPrice,
   alertSettings,
+  calibratedPrice,
   isPriceCheckDue,
   priceNotification,
   type MonitoredProduct,
@@ -75,12 +76,13 @@ async function resolvePrice(product: MonitoredProduct) {
     const catalogue = await lisCatalogue();
     const item = findLisSkinsItem(catalogue.items, product.url);
     if (!item?.price || item.price <= 0) throw new Error("Товар не найден в LIS-SKINS");
-    return rubPriceFromUsd(item.price, catalogue.rate);
+    const price = rubPriceFromUsd(item.price, catalogue.rate);
+    return { price, sourcePrice: price };
   }
   const url = new URL(product.url);
   const resolved = await resolveStoreProduct(url, product.name);
   if (!resolved.priceRub) throw new Error("Цена не распознана");
-  return resolved.priceRub;
+  return { price: calibratedPrice(product, resolved.priceRub), sourcePrice: resolved.priceRub };
 }
 
 async function sendPriceNotification(
@@ -154,15 +156,15 @@ export async function POST(request: Request) {
       if (!product || !product.url || !isPriceCheckDue(product, now)) continue;
       checked += 1;
       try {
-        const nextPrice = await resolvePrice(product);
-        const notification = priceNotification(product, nextPrice);
-        const updated = applyObservedPrice(product, nextPrice, capturedAt);
+        const resolvedPrice = await resolvePrice(product);
+        const notification = priceNotification(product, resolvedPrice.price);
+        const updated = applyObservedPrice(product, resolvedPrice.price, capturedAt, resolvedPrice.sourcePrice);
         const configuredAlert = alertSettings(product);
         products[index] = {
           ...updated,
           alertMode: configuredAlert?.mode,
           alertThreshold: configuredAlert?.threshold,
-          alertReferencePrice: configuredAlert ? (notification ? nextPrice : configuredAlert.reference) : undefined,
+          alertReferencePrice: configuredAlert ? (notification ? resolvedPrice.price : configuredAlert.reference) : undefined,
           alertCheckPending: false,
           target: undefined,
           targetAlerted: undefined,

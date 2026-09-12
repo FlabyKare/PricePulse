@@ -205,6 +205,12 @@ select:focus, .standalone-input:focus { border-color: var(--lime); box-shadow: 0
 .detail-price { display: flex; align-items: center; justify-content: space-between; padding: 18px 0; border-top: 1px solid var(--line); }
 .detail-price span:first-child { display: block; color: var(--muted); font-size: 10px; margin-bottom: 5px; }
 .detail-price strong { display: block; font-size: 28px; letter-spacing: -1px; }
+.detail-price-actions { display: flex; align-items: flex-end; flex-direction: column; gap: 7px; }
+.detail-price-actions > button { padding: 0; border: 0; background: transparent; color: var(--green); font-size: 8px; font-weight: 850; cursor: pointer; }
+.visible-price-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; margin: -5px 0 16px; padding: 12px; border: 1px solid var(--line); border-radius: 13px; background: color-mix(in srgb, var(--card) 74%, var(--paper)); }
+.visible-price-form > p { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 8px; line-height: 1.45; }
+.visible-price-form .price-input { margin: 0; }
+.visible-price-form .form-error { grid-column: 1 / -1; margin: 0; }
 .chart-card { padding: 15px 17px 8px; border-radius: 15px; background: #1c1f1a; color: white; }
 .chart-labels { display: flex; justify-content: space-between; font-size: 9px; color: #91968a; }
 .chart-labels b { color: var(--lime); }

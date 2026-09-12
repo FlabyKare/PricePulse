@@ -18,9 +18,24 @@ export type MonitoredProduct = {
   alertThreshold?: number;
   alertReferencePrice?: number;
   alertCheckPending?: boolean;
+  priceCalibration?: { sourcePrice: number; visiblePrice: number };
+  lastResolvedPrice?: number;
   priceHistory?: MonitoredPricePoint[];
   offers?: Array<{ id: string; store: string; price: number; url: string; note: string }>;
 };
+
+export function calibratedPrice(product: MonitoredProduct, sourcePrice: number) {
+  const raw = Number(sourcePrice);
+  if (!Number.isFinite(raw) || raw <= 0) return raw;
+  const sourceAnchor = Number(product.priceCalibration?.sourcePrice);
+  const visibleAnchor = Number(product.priceCalibration?.visiblePrice);
+  if (!Number.isFinite(sourceAnchor) || sourceAnchor <= 0 || !Number.isFinite(visibleAnchor) || visibleAnchor <= 0) {
+    return Math.round(raw);
+  }
+  const offset = visibleAnchor - sourceAnchor;
+  if (!Number.isFinite(offset) || Math.abs(offset) > Math.max(100_000, sourceAnchor * 0.5)) return Math.round(raw);
+  return Math.max(1, Math.round(raw + offset));
+}
 
 const FIRST_CHECK_DELAY_MS = 2 * 60 * 1000;
 export function isPriceCheckDue(product: MonitoredProduct, now = Date.now()) {
@@ -49,7 +64,7 @@ export function alertSettings(product: MonitoredProduct) {
   if (!Number.isFinite(reference) || reference <= 0) return null;
   return { mode, threshold, reference };
 }
-export function applyObservedPrice(product: MonitoredProduct, price: number, capturedAt: string) {
+export function applyObservedPrice(product: MonitoredProduct, price: number, capturedAt: string, sourcePrice = price) {
   const previous = Number(product.price) > 0 ? Number(product.price) : price;
   const change = previous > 0 ? Math.round(((price - previous) / previous) * 1000) / 10 : 0;
   const history = [...(product.priceHistory ?? []), { price, capturedAt }].slice(-30);
@@ -67,6 +82,7 @@ export function applyObservedPrice(product: MonitoredProduct, price: number, cap
     price,
     change,
     nextCheck: `через ${Math.max(1, Number(product.period) || 1)} ч`,
+    lastResolvedPrice: Number.isFinite(sourcePrice) && sourcePrice > 0 ? sourcePrice : product.lastResolvedPrice,
     priceHistory: history,
     offers: [refreshedOffer, ...(product.offers ?? []).filter((offer) => offer.store !== source)],
   };

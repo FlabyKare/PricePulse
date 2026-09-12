@@ -3,6 +3,7 @@
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 import { createContext, FormEvent, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { isLisSkinsUrl } from "@/lib/lis-skins";
+import { calibratedPrice } from "@/lib/price-monitor";
 import { mergeProfileRecords } from "@/lib/profile-state";
 import { shouldDismissSheetDrag } from "@/lib/sheet-gesture";
 import { InvestmentsView, SmartDiscoveryView } from "./ai-views";
@@ -43,6 +44,8 @@ type Product = {
   alertThreshold?: number;
   alertReferencePrice?: number;
   alertCheckPending?: boolean;
+  priceCalibration?: { sourcePrice: number; visiblePrice: number };
+  lastResolvedPrice?: number;
   offers?: Offer[];
 };
 
@@ -467,14 +470,16 @@ function withResolvedLisPrice(product: Product, resolved: ResolvedLisProduct): P
 
 function withResolvedStorePrice(product: Product, resolved: ResolvedStoreProduct): Product {
   if (!resolved.priceRub || resolved.priceRub <= 0) return product;
-  const previousPrice = product.price > 0 ? product.price : resolved.priceRub;
+  const sourcePrice = resolved.priceRub;
+  const visiblePrice = calibratedPrice(product, sourcePrice);
+  const previousPrice = product.price > 0 ? product.price : visiblePrice;
   const change = previousPrice > 0
-    ? Math.round(((resolved.priceRub - previousPrice) / previousPrice) * 1000) / 10
+    ? Math.round(((visiblePrice - previousPrice) / previousPrice) * 1000) / 10
     : 0;
   const refreshedOffer: Offer = {
     id: product.offers?.find((offer) => offer.store === resolved.source)?.id ?? `${product.id}-${resolved.source}`,
     store: resolved.source,
-    price: resolved.priceRub,
+    price: visiblePrice,
     url: resolved.url,
     note: "Цена проверена по странице магазина",
   };
@@ -484,12 +489,40 @@ function withResolvedStorePrice(product: Product, resolved: ResolvedStoreProduct
     source: resolved.source || product.source,
     url: resolved.url,
     oldPrice: previousPrice,
-    price: resolved.priceRub,
+    price: visiblePrice,
     change,
     nextCheck: "проверено только что",
+    lastResolvedPrice: sourcePrice,
     imageUrl: resolved.imageUrl ?? product.imageUrl,
-    priceHistory: appendPriceObservation(product.priceHistory, resolved.priceRub),
+    priceHistory: appendPriceObservation(product.priceHistory, visiblePrice),
     offers: [refreshedOffer, ...(product.offers ?? []).filter((offer) => offer.store !== resolved.source)],
+  };
+}
+
+function withVisibleStorePrice(product: Product, visiblePrice: number): Product {
+  const nextPrice = Math.max(1, Math.round(visiblePrice));
+  const sourcePrice = Number(product.lastResolvedPrice) > 0 ? Number(product.lastResolvedPrice) : product.price;
+  const previousPrice = product.price > 0 ? product.price : nextPrice;
+  const change = previousPrice > 0 ? Math.round(((nextPrice - previousPrice) / previousPrice) * 1000) / 10 : 0;
+  const source = product.source || "Магазин";
+  const refreshedOffer: Offer = {
+    id: product.offers?.find((offer) => offer.store === source)?.id ?? `${product.id}-${source}`,
+    store: source,
+    price: nextPrice,
+    url: product.url,
+    note: "Цена уточнена пользователем",
+  };
+  return {
+    ...product,
+    oldPrice: previousPrice,
+    price: nextPrice,
+    change,
+    priceCalibration: sourcePrice !== nextPrice ? { sourcePrice, visiblePrice: nextPrice } : undefined,
+    lastResolvedPrice: sourcePrice,
+    alertReferencePrice: product.alertThreshold ? nextPrice : product.alertReferencePrice,
+    nextCheck: "цена уточнена только что",
+    priceHistory: appendPriceObservation(product.priceHistory, nextPrice),
+    offers: [refreshedOffer, ...(product.offers ?? []).filter((offer) => offer.store !== source)],
   };
 }
 
@@ -938,15 +971,19 @@ export default function Home() {
   async function checkPrice(id: number) {
     const product = products.find((item) => item.id === id);
     if (!product) return;
-    if (!isLisSkinsUrl(product.url)) {
-      setToast("Автоматическая проверка пока доступна для LIS-SKINS");
-      return;
-    }
-    setToast("Проверяем цену в каталоге LIS-SKINS…");
+    setToast(`Проверяем цену в ${product.source}…`);
     try {
-      const resolved = await resolveLisProduct(product.url);
-      setProducts((current) => current.map((item) => item.id === id ? withResolvedLisPrice(item, resolved) : item));
-      setToast(`Цена обновлена: ${formatPrice(resolved.priceRub)}`);
+      if (isLisSkinsUrl(product.url)) {
+        const resolved = await resolveLisProduct(product.url);
+        setProducts((current) => current.map((item) => item.id === id ? withResolvedLisPrice(item, resolved) : item));
+        setToast(`Цена обновлена: ${formatPrice(resolved.priceRub)}`);
+      } else {
+        const resolved = await resolveStoreProduct(product.url, product.name);
+        if (!resolved.priceRub || resolved.priceRub <= 0) throw new Error("Магазин не отдал цену");
+        const nextPrice = calibratedPrice(product, resolved.priceRub);
+        setProducts((current) => current.map((item) => item.id === id ? withResolvedStorePrice(item, resolved) : item));
+        setToast(`Цена обновлена: ${formatPrice(nextPrice)}`);
+      }
       haptic("medium");
     } catch (error) {
       setToast(error instanceof Error ? error.message : "Не удалось проверить цену");
@@ -1251,6 +1288,13 @@ export default function Home() {
           onCheck={checkPrice}
           onAddOffer={addOffer}
           onDelete={deleteProduct}
+          onVisiblePrice={(id, value) => {
+            const update = (product: Product) => product.id === id ? withVisibleStorePrice(product, value) : product;
+            setProducts((current) => current.map(update));
+            setSelected((current) => current ? update(current) : current);
+            setToast(`Цена уточнена: ${formatPrice(value)}. Поправка сохранена для следующих проверок`);
+            haptic("medium");
+          }}
           onAlert={(id, settings) => {
             const withAlert = (product: Product): Product => ({
               ...product,
@@ -1462,7 +1506,8 @@ function AddProductModal({ onClose, onAdd }: { onClose: () => void; onAdd: (prod
         : `Товар из ${source}`;
       const productName = manualName.trim() || resolved?.name || inferredName;
       const resolvedPrice = typeof resolved?.priceRub === "number" && resolved.priceRub > 0 ? resolved.priceRub : null;
-      const currentPrice = resolvedPrice ?? enteredPrice;
+      const manuallyCorrectedPrice = priceEdited.current && Number.isFinite(enteredPrice) && enteredPrice > 0 ? enteredPrice : null;
+      const currentPrice = manuallyCorrectedPrice ?? resolvedPrice ?? enteredPrice;
       if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
         setError("Цена не определилась автоматически — укажите её вручную");
         return;
@@ -1490,6 +1535,10 @@ function AddProductModal({ onClose, onAdd }: { onClose: () => void; onAdd: (prod
         artClass: isLis ? "violet" : "blue",
         favorite: false,
         imageUrl: resolved?.imageUrl ?? undefined,
+        lastResolvedPrice: resolvedPrice ?? undefined,
+        priceCalibration: manuallyCorrectedPrice && resolvedPrice && manuallyCorrectedPrice !== resolvedPrice
+          ? { sourcePrice: resolvedPrice, visiblePrice: manuallyCorrectedPrice }
+          : undefined,
         priceHistory: [{ price: currentPrice, capturedAt: new Date(now).toISOString() }],
         alertMode,
         alertThreshold: normalizedAlert,
@@ -1588,7 +1637,7 @@ function AddProductModal({ onClose, onAdd }: { onClose: () => void; onAdd: (prod
     </div>
   );
 }
-function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAlert, onAddOffer, onDelete }: { product: Product; onClose: () => void; onFavorite: (id: number) => void; onCheck: (id: number) => void; onPeriod: (id: number, period: number) => void; onAlert: (id: number, settings?: PriceAlertSettings) => void; onAddOffer: (id: number, url: string) => void; onDelete: (id: number) => void }) {
+function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAlert, onAddOffer, onDelete, onVisiblePrice }: { product: Product; onClose: () => void; onFavorite: (id: number) => void; onCheck: (id: number) => void; onPeriod: (id: number, period: number) => void; onAlert: (id: number, settings?: PriceAlertSettings) => void; onAddOffer: (id: number, url: string) => void; onDelete: (id: number) => void; onVisiblePrice: (id: number, value: number) => void }) {
   const formatPrice = usePriceFormatter();
   const [offerInputOpen, setOfferInputOpen] = useState(false);
   const [offerUrl, setOfferUrl] = useState("");
@@ -1597,6 +1646,9 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAle
   const [alertMode, setAlertMode] = useState<PriceAlertSettings["mode"]>(product.alertMode === "percent" ? "percent" : "amount");
   const [alertInput, setAlertInput] = useState(product.alertThreshold ? String(product.alertThreshold) : "");
   const [alertError, setAlertError] = useState("");
+  const [priceEditing, setPriceEditing] = useState(false);
+  const [visiblePriceInput, setVisiblePriceInput] = useState(String(Math.round(product.price)));
+  const [visiblePriceError, setVisiblePriceError] = useState("");
   const [sheetDragY, setSheetDragY] = useState(0);
   const [sheetDragging, setSheetDragging] = useState(false);
   const [sheetDismissing, setSheetDismissing] = useState(false);
@@ -1671,6 +1723,18 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAle
     setAlertError("");
   }
 
+  function saveVisiblePrice(event: FormEvent) {
+    event.preventDefault();
+    const value = Number(visiblePriceInput.replace(/\s/g, "").replace(",", "."));
+    if (!Number.isFinite(value) || value <= 0 || value > 100_000_000) {
+      setVisiblePriceError("Введите цену от 1 до 100 000 000 ₽");
+      return;
+    }
+    onVisiblePrice(product.id, value);
+    setPriceEditing(false);
+    setVisiblePriceError("");
+  }
+
   return (
     <div role="presentation" className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className={"modal details-modal" + (sheetDragging ? " is-dragging" : "") + (sheetDismissing ? " is-dismissing" : "")} style={{ "--sheet-drag-y": sheetDragY + "px" } as CSSProperties} role="dialog" aria-modal="true" aria-labelledby="detail-title">
@@ -1686,7 +1750,24 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAle
           <div><p>{product.source} · {product.category}</p><h2 id="detail-title">{product.name}</h2></div>
           <button className={`heart detail-heart ${product.favorite ? "liked" : ""}`} onClick={() => onFavorite(product.id)} aria-label="Избранное">{product.favorite ? "♥" : "♡"}</button>
         </div>
-        <div className="detail-price"><div><span>Текущая цена</span><strong>{formatPrice(product.price)}</strong></div><span className={`trend ${product.change <= 0 ? "down" : "up"}`}>{product.change <= 0 ? "↓" : "↑"} {Math.abs(product.change)}%</span></div>
+        <div className="detail-price">
+          <div><span>Текущая цена</span><strong>{formatPrice(product.price)}</strong></div>
+          <div className="detail-price-actions">
+            <span className={`trend ${product.change <= 0 ? "down" : "up"}`}>{product.change <= 0 ? "↓" : "↑"} {Math.abs(product.change)}%</span>
+            {!isLisSkinsUrl(product.url) && <button type="button" onClick={() => { setVisiblePriceInput(String(Math.round(product.price))); setVisiblePriceError(""); setPriceEditing((current) => !current); }}>{priceEditing ? "Закрыть" : "Уточнить цену"}</button>}
+          </div>
+        </div>
+        {priceEditing && (
+          <form className="visible-price-form" onSubmit={saveVisiblePrice}>
+            <p>Укажите цену, которую видите в магазине. Разница региона или персональной скидки сохранится для следующих проверок.</p>
+            <label className="price-input" htmlFor={`visible-price-${product.id}`}>
+              <input id={`visible-price-${product.id}`} inputMode="decimal" value={visiblePriceInput} onChange={(event) => { setVisiblePriceInput(event.target.value.replace(/[^\d,.\s]/g, "")); setVisiblePriceError(""); }} autoFocus />
+              <span>₽</span>
+            </label>
+            <button className="target-save-button" type="submit">Сохранить</button>
+            {visiblePriceError && <p className="form-error" role="alert">{visiblePriceError}</p>}
+          </form>
+        )}
         <div className="chart-card">
           <div className="chart-labels">
             <span>{forecast.observedCount} {forecast.observedCount === 1 ? "замер" : "замеров"}</span>

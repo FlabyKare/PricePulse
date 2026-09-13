@@ -122,6 +122,12 @@ test("removes the temporary starter preview", async () => {
   assert.match(resolveRoute, /steamcommunity\.com\/market\/listings\/730/);
   assert.match(resolveRoute, /imageFromPage/);
   assert.match(page, /OpenRouter-ready/);
+  assert.match(page, /NotificationsModal/);
+  assert.match(page, /Ценовые сигналы/);
+  assert.match(page, /generateSurprisePalette/);
+  assert.match(page, /Удивите меня/);
+  assert.doesNotMatch(page, /setToast\("Изменения цены приходят сообщением от бота"\)/);
+  assert.match(css, /\.details-modal > \.modal-close, \.detail-heart/);
   assert.match(cs2InvestmentsRoute, /эвристика/);
   assert.match(css, /profile-sync-badge/);
   assert.match(css, /\.primary-button[^}]*display:\s*inline-flex/s);

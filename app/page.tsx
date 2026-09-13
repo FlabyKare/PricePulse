@@ -5,6 +5,7 @@ import { createContext, FormEvent, useContext, useEffect, useMemo, useRef, useSt
 import { isLisSkinsUrl } from "@/lib/lis-skins";
 import { calibratedPrice } from "@/lib/price-monitor";
 import { DNS_REGIONS, dnsRegionByCode } from "@/lib/dns-regions";
+import { generateSurprisePalette } from "@/lib/palette-generator";
 import { mergeProfileRecords } from "@/lib/profile-state";
 import { shouldDismissSheetDrag } from "@/lib/sheet-gesture";
 import { InvestmentsView, SmartDiscoveryView } from "./ai-views";
@@ -153,6 +154,7 @@ type TelegramWindow = Window & {
       ready?: () => void;
       expand?: () => void;
       disableVerticalSwipes?: () => void;
+      openTelegramLink?: (url: string) => void;
       HapticFeedback?: { impactOccurred: (value: string) => void };
     };
   };
@@ -563,6 +565,7 @@ export default function Home() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [themeOpen, setThemeOpen] = useState(false);
+  const [notificationOpen, setNotificationOpen] = useState(false);
   const [collectionOpen, setCollectionOpen] = useState(false);
   const [selectedCollection, setSelectedCollection] = useState<Collection | null>(null);
   const [selected, setSelected] = useState<Product | null>(null);
@@ -919,6 +922,7 @@ export default function Home() {
   const formatPrice = (value: number) => formatPriceValue(value, currency, rates);
   const totalValue = products.reduce((sum, product) => sum + product.price, 0);
   const favoriteCount = products.filter((product) => product.favorite).length;
+  const configuredAlertCount = products.filter((product) => Number(product.alertThreshold) > 0).length;
   const summaryUnavailable = catalogReady && syncStatus === "error" && Boolean(telegramInitDataValue);
   const displayName = profile?.firstName || "друг";
   const avatarLetter = displayName.slice(0, 1).toLocaleUpperCase("ru");
@@ -1179,13 +1183,14 @@ export default function Home() {
             aria-label="Поиск"
             onClick={() => setSearchOpen((value) => !value)}
           >
-            ⌕
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5" /><path d="m16 16 4 4" /></svg>
           </button>
           <button className="icon-button palette-button" aria-label="Выбрать цветовую палитру" onClick={() => setThemeOpen(true)}>
-            ◐
+            <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" /><path d="M12 4v16" /></svg>
           </button>
-          <button className="icon-button notification" aria-label="Уведомления" onClick={() => setToast("Изменения цены приходят сообщением от бота")}>
-            ♢<span />
+          <button className="icon-button notification" aria-label={`Уведомления: настроено ${configuredAlertCount}`} onClick={() => setNotificationOpen(true)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9" /><path d="M10 21h4" /></svg>
+            {configuredAlertCount > 0 && <span>{configuredAlertCount > 9 ? "9+" : configuredAlertCount}</span>}
           </button>
           <button className="avatar" aria-label={profile ? `Профиль ${displayName}` : "Профиль"} onClick={() => changeNav("Профиль")}>{avatarLetter}</button>
         </div>
@@ -1312,6 +1317,7 @@ export default function Home() {
 
       {addOpen && <AddProductModal defaultDnsRegion={products.find((product) => product.source === "DNS" && product.storeRegion)?.storeRegion?.code ?? ""} onClose={() => setAddOpen(false)} onAdd={addProduct} />}
       {themeOpen && <ThemeModal palette={palette} onApply={(next) => { setPalette(next); setThemeOpen(false); setToast(`Палитра «${next.name}» включена`); }} onClose={() => setThemeOpen(false)} />}
+      {notificationOpen && <NotificationsModal products={products} profile={profile} onClose={() => setNotificationOpen(false)} onOpenProduct={(product) => { setNotificationOpen(false); setSelected(product); }} />}
       {collectionOpen && <CollectionModal products={products} onClose={() => setCollectionOpen(false)} onCreate={(collection) => { setCollections((current) => [collection, ...current]); setCollectionOpen(false); setToast("Подборка создана — теперь ей можно делиться"); }} />}
       {selectedCollection && (
         <CollectionDetailsModal
@@ -2044,7 +2050,12 @@ function ThemeModal({ palette, onApply, onClose }: { palette: Palette; onApply: 
         <div className="modal-handle" /><button className="modal-close" onClick={onClose} aria-label="Закрыть">×</button>
         <div className="modal-kicker"><span>◐</span> ПЕРСОНАЛИЗАЦИЯ</div>
         <h2 id="theme-title">Ваша палитра</h2>
-        <p className="modal-lead">Выберите настроение или соберите собственное из шести цветов.</p>
+        <p className="modal-lead">Выберите настроение, создайте гармоничную тему одним нажатием или соберите собственную.</p>
+        <button className="surprise-theme-button" type="button" onClick={() => { setSelected(generateSurprisePalette()); haptic("medium"); }}>
+          <span className="surprise-theme-icon">✦</span>
+          <span><b>Удивите меня</b><small>Каждое нажатие создаёт новую сочетающуюся палитру</small></span>
+          <span className="surprise-theme-swatches" aria-hidden="true"><i style={{ background: selected.accent }} /><i style={{ background: selected.accent2 }} /><i style={{ background: selected.accent3 }} /></span>
+        </button>
         <div className="theme-layout">
           <div className="palette-list">
             {palettes.map((item) => <button key={item.id} className={selected.id === item.id ? "active" : ""} onClick={() => setSelected(item)}><span className="palette-swatches">{[item.accent, item.accent2, item.accent3, item.paper].map((color) => <i key={color} style={{ background: color }} />)}</span><b>{item.name}</b><small>{selected.id === item.id ? "Выбрано" : "Применить"}</small></button>)}
@@ -2059,6 +2070,53 @@ function ThemeModal({ palette, onApply, onClose }: { palette: Palette; onApply: 
             "accent", "Акцент"], ["accent2", "Доп. 1"], ["accent3", "Доп. 2"], ["paper", "Фон"], ["card", "Карточки"], ["ink", "Текст"]] as const).map(([key, label]) => <label key={key}><input type="color" value={selected[key]} onChange={(event) => updateCustom(key, event.target.value)} /><span>{label}</span></label>)}
         </div>
         <button className="primary-button" onClick={() => onApply(selected)}>Применить палитру <span>→</span></button>
+      </section>
+    </div>
+  );
+}
+
+function NotificationsModal({ products, profile, onClose, onOpenProduct }: { products: Product[]; profile: TelegramProfile | null; onClose: () => void; onOpenProduct: (product: Product) => void }) {
+  const formatPrice = usePriceFormatter();
+  const configured = products.filter((product) => Number(product.alertThreshold) > 0);
+  const notConfigured = products.filter((product) => !(Number(product.alertThreshold) > 0));
+  const openBot = () => {
+    const url = "https://t.me/price_pulce_bot";
+    const telegram = (window as TelegramWindow).Telegram?.WebApp;
+    if (telegram?.openTelegramLink) telegram.openTelegramLink(url);
+    else window.open(url, "_blank", "noopener,noreferrer");
+  };
+  const thresholdLabel = (product: Product) => product.alertMode === "percent"
+    ? `±${product.alertThreshold?.toLocaleString("ru-RU")}%`
+    : `±${formatPrice(product.alertThreshold ?? 0)}`;
+
+  return (
+    <div role="presentation" className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="modal notifications-modal" role="dialog" aria-modal="true" aria-labelledby="notifications-title">
+        <div className="modal-handle" /><button className="modal-close" onClick={onClose} aria-label="Закрыть">×</button>
+        <div className="modal-kicker"><span>↯</span> УВЕДОМЛЕНИЯ</div>
+        <h2 id="notifications-title">Ценовые сигналы</h2>
+        <p className="modal-lead">Изменения цены приходят сообщением от бота только после достижения заданного порога.</p>
+        <div className={`notification-channel ${profile ? "connected" : ""}`}>
+          <span className="notification-channel-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 11 16-7-5 16-4-6-7-3Z" /><path d="m11 14 4-4" /></svg></span>
+          <div><b>{profile ? "Telegram подключён" : "Откройте PricePulse в Telegram"}</b><small>{profile ? `Сообщения получит ${profile.username ? `@${profile.username}` : profile.firstName}` : "Так бот сможет присылать ценовые сигналы"}</small></div>
+          <button type="button" onClick={openBot}>Открыть бота</button>
+        </div>
+        <div className="notification-summary">
+          <div><strong>{configured.length}</strong><span>с порогом</span></div>
+          <div><strong>{notConfigured.length}</strong><span>без порога</span></div>
+          <div><strong>{products.length}</strong><span>всего товаров</span></div>
+        </div>
+        <div className="notification-products">
+          {products.length === 0 && <p className="notification-empty">Добавьте товар, чтобы настроить первый ценовой сигнал.</p>}
+          {[...configured, ...notConfigured].map((product) => {
+            const hasThreshold = Number(product.alertThreshold) > 0;
+            return <button type="button" key={product.id} onClick={() => onOpenProduct(product)}>
+              <span className={`notification-product-art ${product.artClass}`}>{product.art}</span>
+              <span><b>{product.name}</b><small>{product.source} · {hasThreshold ? `следующая проверка ${product.nextCheck}` : "уведомления выключены"}</small></span>
+              <span className={`notification-threshold ${hasThreshold ? "" : "muted"}`}><b>{hasThreshold ? thresholdLabel(product) : "Не задан"}</b><small>{hasThreshold ? "Изменить" : "Настроить"}</small></span>
+            </button>;
+          })}
+        </div>
       </section>
     </div>
   );

@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { env } from "cloudflare:workers";
 import { getDb } from "@/db";
 import { profileStates } from "@/db/schema";
-import { findLisSkinsItem, isLisSkinsUrl, parseCbrUsdRate, rubPriceFromUsd, type LisSkinsExportItem } from "@/lib/lis-skins";
+import { findLisSkinsItem, isLisSkinsUrl, lisRubRateFromCbr, parseCbrUsdRate, rubPriceFromUsd, type LisSkinsExportItem } from "@/lib/lis-skins";
 import { resolveStoreProduct } from "@/lib/store-product";
 import {
   applyObservedPrice,
@@ -65,9 +65,10 @@ async function lisCatalogue() {
   ]);
   if (!catalogueResponse.ok || !ratesResponse.ok) throw new Error("Источник цен временно недоступен");
   const items = await catalogueResponse.json() as LisSkinsExportItem[];
-  const rate = parseCbrUsdRate(await ratesResponse.text());
+  const cbrRate = parseCbrUsdRate(await ratesResponse.text());
+  const rate = cbrRate ? lisRubRateFromCbr(cbrRate) : null;
   if (!Array.isArray(items) || !rate) throw new Error("Источник цен вернул некорректные данные");
-  lisCache = { items, rate: rate * 1.03, expiresAt: Date.now() + 5 * 60 * 1000 };
+  lisCache = { items, rate, expiresAt: Date.now() + 5 * 60 * 1000 };
   return lisCache;
 }
 

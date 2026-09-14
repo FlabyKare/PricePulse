@@ -8,6 +8,12 @@ export type LisSkinsExportItem = {
 
 const LIS_HOSTS = new Set(["lis-skins.com", "www.lis-skins.com", "app.lis-skins.com"]);
 
+// The public LIS-SKINS catalogue is denominated in USD, while its storefront
+// publishes RUB prices using a two-decimal display rate above the CBR rate.
+// Keeping this conversion here prevents the app refresh and Telegram monitor
+// from silently using different formulas.
+export const LIS_RUB_RATE_MULTIPLIER = 1.042;
+
 export function isLisSkinsUrl(rawUrl: string) {
   try {
     const url = new URL(rawUrl);
@@ -50,6 +56,11 @@ export function parseCbrUsdRate(xml: string) {
     ?? usdBlock?.match(/<Value>([^<]+)<\/Value>/i)?.[1];
   const rate = Number(value?.replace(",", "."));
   return Number.isFinite(rate) && rate > 0 ? rate : null;
+}
+
+export function lisRubRateFromCbr(cbrRate: number) {
+  if (!Number.isFinite(cbrRate) || cbrRate <= 0) return null;
+  return Math.round(cbrRate * LIS_RUB_RATE_MULTIPLIER * 100) / 100;
 }
 
 export function rubPriceFromUsd(priceUsd: number, exchangeRate: number) {

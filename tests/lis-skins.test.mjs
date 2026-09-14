@@ -18,16 +18,30 @@ test("resolves the Titan Katowice sticker from the LIS-SKINS export", async () =
   globalThis.fetch = async (input) => {
     const url = input instanceof Request ? input.url : String(input);
     if (url.includes("market_export_json/csgo.json")) {
-      return Response.json([{
-        name: "Sticker | Titan (Holo) | Katowice 2014",
-        price: 74445.64,
-        unlocked_price: 74445.64,
-        url: "https://app.lis-skins.com/market/csgo/sticker-titan-holo-katowice-2014/",
-        count: 1,
-      }]);
+      return Response.json([
+        {
+          name: "Sticker | Titan (Holo) | Katowice 2014",
+          price: 74445.64,
+          unlocked_price: 74445.64,
+          url: "https://app.lis-skins.com/market/csgo/sticker-titan-holo-katowice-2014/",
+          count: 1,
+        },
+        {
+          name: "★ Butterfly Knife | Freehand (Minimal Wear)",
+          price: 608.47,
+          url: "https://app.lis-skins.com/market/csgo/%E2%98%85-butterfly-knife-freehand-minimal-wear/",
+          count: 70,
+        },
+        {
+          name: "★ Butterfly Knife | Gamma Doppler Phase 1 (Factory New)",
+          price: 1951.11,
+          url: "https://app.lis-skins.com/market/csgo/%E2%98%85-butterfly-knife-gamma-doppler-phase-1-factory-new/",
+          count: 59,
+        },
+      ]);
     }
     if (url.includes("XML_daily.asp")) {
-      return new Response('<ValCurs><Valute><CharCode>AUD</CharCode><VunitRate>59,2471</VunitRate></Valute><Valute><CharCode>USD</CharCode><VunitRate>82,9211</VunitRate></Valute></ValCurs>');
+      return new Response('<ValCurs><Valute><CharCode>AUD</CharCode><VunitRate>59,2471</VunitRate></Valute><Valute><CharCode>USD</CharCode><VunitRate>84,2569</VunitRate></Valute></ValCurs>');
     }
     if (url.includes("steamcommunity.com/market/listings/730/")) {
       return new Response('<html><head><meta property="og:image" content="https://community.steamstatic.com/economy/image/test-preview"></head></html>', {
@@ -49,10 +63,26 @@ test("resolves the Titan Katowice sticker from the LIS-SKINS export", async () =
     assert.equal(response.status, 200);
     assert.equal(body.name, "Sticker | Titan (Holo) | Katowice 2014");
     assert.equal(body.priceUsd, 74445.64);
-    assert.equal(body.exchangeRate, 85.4087);
-    assert.equal(body.priceRub, 6358305.33);
+    assert.equal(body.exchangeRate, 87.8);
+    assert.equal(body.priceRub, 6536327.19);
     assert.equal(body.count, 1);
     assert.equal(body.imageUrl, "https://community.steamstatic.com/economy/image/test-preview");
+    const resolve = async (url) => {
+      const response = await worker.fetch(new Request("http://localhost/api/products/resolve", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ url }),
+      }), workerEnv, workerContext);
+      assert.equal(response.status, 200);
+      return response.json();
+    };
+
+    const freehand = await resolve("https://lis-skins.com/market/csgo/%E2%98%85-butterfly-knife-freehand-minimal-wear/");
+    const gamma = await resolve("https://lis-skins.com/market/csgo/%E2%98%85-butterfly-knife-gamma-doppler-phase-1-factory-new/");
+    assert.equal(freehand.priceRub, 53423.67);
+    assert.equal(gamma.priceRub, 171307.46);
+    assert.equal(freehand.exchangeRate, 87.8);
+    assert.equal(gamma.exchangeRate, 87.8);
   } finally {
     globalThis.fetch = originalFetch;
   }

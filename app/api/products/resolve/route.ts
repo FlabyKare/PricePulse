@@ -5,6 +5,7 @@ import { dnsRegionByCode } from "@/lib/dns-regions";
 import {
   findLisSkinsItem,
   getLisSkinsSlug,
+  lisRubRateFromCbr,
   parseCbrUsdRate,
   rubPriceFromUsd,
   type LisSkinsExportItem,
@@ -13,8 +14,7 @@ import {
 const LIS_EXPORT_URL = "https://lis-skins.com/market_export_json/csgo.json";
 const CBR_RATES_URL = "https://www.cbr.ru/scripts/XML_daily.asp";
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const LIS_RATE_SURCHARGE = 1.03;
-const FALLBACK_USD_RUB_RATE = 85.37;
+const FALLBACK_LIS_USD_RUB_RATE = 87.8;
 const PREVIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 let catalogueCache: { items: LisSkinsExportItem[]; expiresAt: number } | null = null;
@@ -86,18 +86,19 @@ async function getCatalogue() {
 
 async function getUsdRubRate() {
   const configuredRate = Number(process.env.LIS_USD_RUB_RATE);
-  if (Number.isFinite(configuredRate) && configuredRate > 0) return configuredRate;
+  if (Number.isFinite(configuredRate) && configuredRate > 0) return Math.round(configuredRate * 100) / 100;
   if (rateCache && rateCache.expiresAt > Date.now()) return rateCache.value;
   try {
     const response = await fetch(CBR_RATES_URL, { cache: "no-store" });
     if (!response.ok) throw new Error("Курс ЦБ недоступен");
     const cbrRate = parseCbrUsdRate(await response.text());
     if (!cbrRate) throw new Error("Курс USD не найден");
-    const value = Math.round(cbrRate * LIS_RATE_SURCHARGE * 10000) / 10000;
+    const value = lisRubRateFromCbr(cbrRate);
+    if (!value) throw new Error("Курс LIS-SKINS не рассчитан");
     rateCache = { value, expiresAt: Date.now() + CACHE_TTL_MS };
     return value;
   } catch {
-    return FALLBACK_USD_RUB_RATE;
+    return FALLBACK_LIS_USD_RUB_RATE;
   }
 }
 
@@ -155,7 +156,7 @@ export async function POST(request: Request) {
       priceRub: rubPriceFromUsd(item.price, exchangeRate),
       exchangeRate,
       count: item.count,
-      approximate: true,
+      approximate: false,
       needsManualPrice: false,
       imageUrl,
       resolvedBy: "official-catalogue",

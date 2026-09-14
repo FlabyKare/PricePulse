@@ -271,7 +271,7 @@ const CurrencyContext = createContext<{ currency: CurrencyCode; rates: CurrencyR
   rates: defaultRates,
 });
 
-function formatPriceValue(value: number, currency: CurrencyCode, rates: CurrencyRates) {
+function formatPriceValue(value: number, currency: CurrencyCode, rates: CurrencyRates, exactRubles = false) {
   const rate = rates[currency];
   if (!rate) return "—";
   const converted = currency === "RUB" ? value : value / rate;
@@ -279,13 +279,14 @@ function formatPriceValue(value: number, currency: CurrencyCode, rates: Currency
     style: "currency",
     currency,
     currencyDisplay: "symbol",
-    maximumFractionDigits: currency === "RUB" ? 0 : 2,
+    minimumFractionDigits: currency === "RUB" && exactRubles ? 2 : 0,
+    maximumFractionDigits: currency === "RUB" ? (exactRubles ? 2 : 0) : 2,
   }).format(converted);
 }
 
 function usePriceFormatter() {
   const { currency, rates } = useContext(CurrencyContext);
-  return (value: number) => formatPriceValue(value, currency, rates);
+  return (value: number, exactRubles = false) => formatPriceValue(value, currency, rates, exactRubles);
 }
 
 const MIN_FORECAST_POINTS = 3;
@@ -989,7 +990,7 @@ export default function Home() {
       if (isLisSkinsUrl(product.url)) {
         const resolved = await resolveLisProduct(product.url);
         setProducts((current) => current.map((item) => item.id === id ? withResolvedLisPrice(item, resolved) : item));
-        setToast(`Цена обновлена: ${formatPrice(resolved.priceRub)}`);
+        setToast(`Цена обновлена: ${formatPrice(resolved.priceRub, true)}`);
       } else {
         const resolved = await resolveStoreProduct(product.url, product.name, product.storeRegion?.code);
         if (!resolved.priceRub || resolved.priceRub <= 0) throw new Error("Магазин не отдал цену");
@@ -1415,7 +1416,7 @@ function ProductCard({ product, onFavorite, onDelete, onOpen }: { product: Produ
             {product.change < 0 ? "↓" : product.change > 0 ? "↑" : "—"} {Math.abs(product.change).toLocaleString("ru-RU")}%
           </span>
         </div>
-        <div className="price-row"><strong>{formatPrice(product.price)}</strong><s>{product.change !== 0 ? formatPrice(product.oldPrice) : ""}</s></div>
+        <div className="price-row"><strong>{formatPrice(product.price, isLisSkinsUrl(product.url))}</strong><s>{product.change !== 0 ? formatPrice(product.oldPrice, isLisSkinsUrl(product.url)) : ""}</s></div>
         <div className={`prediction-row ${forecast.tone}`}><span>✦ {forecast.label}</span><small>{forecast.confidence === null ? `${forecast.observedCount}/${MIN_FORECAST_POINTS} замера` : `${forecast.confidence}% доверие`}</small></div>
         <div className="monitor-row">
           <span className="pulse-dot" />
@@ -1835,7 +1836,7 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAle
           <button className={`heart detail-heart ${product.favorite ? "liked" : ""}`} onClick={() => onFavorite(product.id)} aria-label="Избранное">{product.favorite ? "♥" : "♡"}</button>
         </div>
         <div className="detail-price">
-          <div><span>Текущая цена</span><strong>{formatPrice(product.price)}</strong></div>
+          <div><span>Текущая цена</span><strong>{formatPrice(product.price, isLisSkinsUrl(product.url))}</strong></div>
           <div className="detail-price-actions">
             <span className={`trend ${product.change <= 0 ? "down" : "up"}`}>{product.change <= 0 ? "↓" : "↑"} {Math.abs(product.change)}%</span>
             {!isLisSkinsUrl(product.url) && <button type="button" onClick={() => { setVisiblePriceInput(String(Math.round(product.price))); setVisiblePriceError(""); setPriceEditing((current) => !current); }}>{priceEditing ? "Закрыть" : "Уточнить цену"}</button>}
@@ -1864,7 +1865,7 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAle
         <div className="chart-card">
           <div className="chart-labels">
             <span>{forecast.observedCount} {forecast.observedCount === 1 ? "замер" : "замеров"}</span>
-            <b>{forecast.delta === 0 ? "без изменения" : `${forecast.delta > 0 ? "+" : "−"}${formatPrice(Math.abs(forecast.delta))}`}</b>
+            <b>{forecast.delta === 0 ? "без изменения" : `${forecast.delta > 0 ? "+" : "−"}${formatPrice(Math.abs(forecast.delta), isLisSkinsUrl(product.url))}`}</b>
           </div>
           <div className="bar-chart" aria-label="График реальных замеров цены">
             {forecast.chart.map((value, index) => <i key={index} style={{ height: `${value}%` }} />)}
@@ -1902,7 +1903,7 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAle
           <div className="target-summary">
             <span>Порог уведомления</span>
             <small>{product.alertThreshold
-              ? `Отсчёт от ${formatPrice(product.alertReferencePrice || product.price)} · рост или снижение`
+              ? `Отсчёт от ${formatPrice(product.alertReferencePrice || product.price, isLisSkinsUrl(product.url))} · рост или снижение`
               : "Бот не присылает уведомления без заданного порога"}</small>
           </div>
           <button
@@ -1932,12 +1933,16 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAle
             <label className="price-input" htmlFor={`detail-alert-${product.id}`}>
               <input
                 id={`detail-alert-${product.id}`}
+                type="text"
                 inputMode="decimal"
+                enterKeyHint="done"
+                autoComplete="off"
                 min={alertMode === "percent" ? "0.1" : "1"}
                 value={alertInput}
-                onChange={(event) => { setAlertInput(event.target.value.replace(/[^\d,.\s]/g, "")); setAlertError(""); }}
+                onInput={(event) => { setAlertInput(event.currentTarget.value.replace(/[^\d,.\s]/g, "")); setAlertError(""); }}
                 placeholder={alertMode === "percent" ? "Например, 10" : "Например, 50 000"}
                 aria-label={alertMode === "percent" ? "Процент изменения цены" : "Сумма изменения цены"}
+                autoFocus
               />
               <span>{alertMode === "percent" ? "%" : "₽"}</span>
             </label>
@@ -1956,7 +1961,7 @@ function ProductDetails({ product, onClose, onFavorite, onCheck, onPeriod, onAle
             <button key={offer.id} className="offer-row" onClick={() => window.open(offerUrlForProduct(offer, product.name), "_blank", "noopener,noreferrer")}>
               <span className="offer-rank">{index + 1}</span>
               <span><b>{offer.store}</b><small>{offer.note}</small></span>
-              <span className="offer-price"><b>{formatPrice(offer.price)}</b>{index === 0 && <small>Лучшая цена</small>}</span>
+              <span className="offer-price"><b>{formatPrice(offer.price, isLisSkinsUrl(offer.url))}</b>{index === 0 && <small>Лучшая цена</small>}</span>
               <span className="offer-link-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8" /></svg></span>
             </button>
           ))}
@@ -2000,7 +2005,7 @@ function CollectionDetailsModal({ collection, products, onClose, onShare, onOpen
               <span className={`mini-art ${product.artClass} ${product.imageUrl ? "has-image" : ""}`}>
                 {product.imageUrl ? <img src={product.imageUrl} alt="" loading="lazy" referrerPolicy="no-referrer" /> : product.art}
               </span>
-              <span><b>{product.name}</b><small>{product.source} · {formatPrice(product.price)}</small></span>
+              <span><b>{product.name}</b><small>{product.source} · {formatPrice(product.price, isLisSkinsUrl(product.url))}</small></span>
               <i>→</i>
             </button>
           ))}
@@ -2030,7 +2035,7 @@ function CollectionModal({ products, onClose, onCreate }: { products: Product[];
         <div className="collection-product-list">
           {products.map((product) => {
             const checked = selectedIds.includes(product.id);
-            return <button key={product.id} className={checked ? "checked" : ""} onClick={() => setSelectedIds((current) => checked ? current.filter((id) => id !== product.id) : [...current, product.id])}><span className={`mini-art ${product.artClass}`}>{product.art}</span><span><b>{product.name}</b><small>{formatPrice(product.price)}</small></span><i>{checked ? "✓" : "+"}</i></button>;
+            return <button key={product.id} className={checked ? "checked" : ""} onClick={() => setSelectedIds((current) => checked ? current.filter((id) => id !== product.id) : [...current, product.id])}><span className={`mini-art ${product.artClass}`}>{product.art}</span><span><b>{product.name}</b><small>{formatPrice(product.price, isLisSkinsUrl(product.url))}</small></span><i>{checked ? "✓" : "+"}</i></button>;
           })}
         </div>
         {error && <p className="form-error">{error}</p>}

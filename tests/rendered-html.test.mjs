@@ -91,7 +91,7 @@ test("removes the temporary starter preview", async () => {
   assert.match(profileRoute, /profileStates\.revision\} \+ 1/);
   assert.match(notificationRoute, /Порог изменения цены достигнут/);
   assert.match(notificationRoute, /alertReferencePrice/);
-  assert.match(notificationRoute, /lisRubRateFromCbr/);
+  assert.match(notificationRoute, /resolveLisSkinsRubRate/);
   assert.doesNotMatch(notificationRoute, /rate\s*\*\s*1\.03/);
   assert.doesNotMatch(notificationRoute, /targetReached/);
   assert.match(priceMonitor, /Math\.abs\(deltaAmount\) >= settings\.threshold/);
@@ -115,12 +115,15 @@ test("removes the temporary starter preview", async () => {
   assert.match(page, /Обновить все цены/);
   assert.match(page, /любой публичной HTTPS-страницы/);
   assert.match(resolveRoute, /resolveStoreProduct/);
-  assert.match(resolveRoute, /lisRubRateFromCbr/);
+  assert.match(resolveRoute, /resolveLisSkinsRubRate/);
   assert.doesNotMatch(resolveRoute, /LIS_RATE_SURCHARGE/);
   assert.match(page, /MIN_FORECAST_POINTS = 3/);
   assert.match(page, /ДОВЕРИЕ МОДЕЛИ/);
   assert.match(page, /aria-expanded={forecastOpen}/);
   assert.match(page, /priceHistory: appendPriceObservation/);
+  assert.match(page, /onInput=\{\(event\) => \{ setAlertInput/);
+  assert.match(page, /minimumFractionDigits: currency === "RUB" && exactRubles \? 2 : 0/);
+  assert.match(css, /-webkit-user-select: text; user-select: text/);
   assert.doesNotMatch(page, /const chartValues = \[56, 48, 52/);
   assert.match(page, /product\.imageUrl && <img/);
   assert.match(resolveRoute, /steamcommunity\.com\/market\/listings\/730/);

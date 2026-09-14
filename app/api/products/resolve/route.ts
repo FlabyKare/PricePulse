@@ -5,20 +5,16 @@ import { dnsRegionByCode } from "@/lib/dns-regions";
 import {
   findLisSkinsItem,
   getLisSkinsSlug,
-  lisRubRateFromCbr,
-  parseCbrUsdRate,
+  resolveLisSkinsRubRate,
   rubPriceFromUsd,
   type LisSkinsExportItem,
 } from "@/lib/lis-skins";
 
 const LIS_EXPORT_URL = "https://lis-skins.com/market_export_json/csgo.json";
-const CBR_RATES_URL = "https://www.cbr.ru/scripts/XML_daily.asp";
 const CACHE_TTL_MS = 5 * 60 * 1000;
-const FALLBACK_LIS_USD_RUB_RATE = 87.8;
 const PREVIEW_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
 let catalogueCache: { items: LisSkinsExportItem[]; expiresAt: number } | null = null;
-let rateCache: { value: number; expiresAt: number } | null = null;
 const previewCache = new Map<string, { value: string | null; expiresAt: number }>();
 
 async function readResponsePrefix(response: Response, maxBytes = 96 * 1024) {
@@ -84,24 +80,6 @@ async function getCatalogue() {
   return items;
 }
 
-async function getUsdRubRate() {
-  const configuredRate = Number(process.env.LIS_USD_RUB_RATE);
-  if (Number.isFinite(configuredRate) && configuredRate > 0) return Math.round(configuredRate * 100) / 100;
-  if (rateCache && rateCache.expiresAt > Date.now()) return rateCache.value;
-  try {
-    const response = await fetch(CBR_RATES_URL, { cache: "no-store" });
-    if (!response.ok) throw new Error("Курс ЦБ недоступен");
-    const cbrRate = parseCbrUsdRate(await response.text());
-    if (!cbrRate) throw new Error("Курс USD не найден");
-    const value = lisRubRateFromCbr(cbrRate);
-    if (!value) throw new Error("Курс LIS-SKINS не рассчитан");
-    rateCache = { value, expiresAt: Date.now() + CACHE_TTL_MS };
-    return value;
-  } catch {
-    return FALLBACK_LIS_USD_RUB_RATE;
-  }
-}
-
 export async function POST(request: Request) {
   const accessDenied = await requirePrivateTelegramAccess(request);
   if (accessDenied) return accessDenied;
@@ -147,19 +125,24 @@ export async function POST(request: Request) {
     if (!item || !Number.isFinite(item.price) || item.price <= 0) {
       return Response.json({ error: "Товар не найден в актуальном каталоге LIS-SKINS" }, { status: 404 });
     }
-    const [exchangeRate, imageUrl] = await Promise.all([getUsdRubRate(), getSteamPreview(item.name)]);
+    const [rate, imageUrl] = await Promise.all([resolveLisSkinsRubRate(item.url), getSteamPreview(item.name)]);
     return Response.json({
       source: "LIS-SKINS",
       name: item.name,
       url: item.url,
       priceUsd: item.price,
-      priceRub: rubPriceFromUsd(item.price, exchangeRate),
-      exchangeRate,
+      priceRub: rubPriceFromUsd(item.price, rate.value),
+      exchangeRate: rate.value,
+      exchangeRateSource: rate.source,
       count: item.count,
-      approximate: false,
+      approximate: rate.source === "cbr-fallback",
       needsManualPrice: false,
       imageUrl,
-      resolvedBy: "official-catalogue",
+      resolvedBy: rate.source === "official-page"
+        ? "page-content"
+        : rate.source === "official-web-index"
+          ? "web-index"
+          : "official-catalogue",
     }, { headers: { "cache-control": "no-store" } });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Не удалось проверить товар";

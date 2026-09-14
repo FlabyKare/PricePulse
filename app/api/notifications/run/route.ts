@@ -2,7 +2,7 @@ import { and, eq, sql } from "drizzle-orm";
 import { env } from "cloudflare:workers";
 import { getDb } from "@/db";
 import { profileStates } from "@/db/schema";
-import { findLisSkinsItem, isLisSkinsUrl, lisRubRateFromCbr, parseCbrUsdRate, rubPriceFromUsd, type LisSkinsExportItem } from "@/lib/lis-skins";
+import { findLisSkinsItem, isLisSkinsUrl, resolveLisSkinsRubRate, rubPriceFromUsd, type LisSkinsExportItem } from "@/lib/lis-skins";
 import { resolveStoreProduct } from "@/lib/store-product";
 import {
   applyObservedPrice,
@@ -18,8 +18,7 @@ type RuntimeEnv = { BOT_TOKEN?: string; TELEGRAM_BOT_ID?: string; PRICEPULSE_ACC
 const MAX_PROFILES_PER_RUN = 25;
 const MAX_CHECKS_PER_RUN = 12;
 const LIS_EXPORT_URL = "https://lis-skins.com/market_export_json/csgo.json";
-const CBR_RATES_URL = "https://www.cbr.ru/scripts/XML_daily.asp";
-let lisCache: { items: LisSkinsExportItem[]; rate: number; expiresAt: number } | null = null;
+let lisCache: { items: LisSkinsExportItem[]; expiresAt: number } | null = null;
 
 function parseProducts(value: string) {
   try {
@@ -59,16 +58,11 @@ async function verifiedMonitorToken(request: Request, runtime: RuntimeEnv) {
 
 async function lisCatalogue() {
   if (lisCache && lisCache.expiresAt > Date.now()) return lisCache;
-  const [catalogueResponse, ratesResponse] = await Promise.all([
-    fetch(LIS_EXPORT_URL, { signal: AbortSignal.timeout(12_000) }),
-    fetch(CBR_RATES_URL, { signal: AbortSignal.timeout(8_000) }),
-  ]);
-  if (!catalogueResponse.ok || !ratesResponse.ok) throw new Error("Источник цен временно недоступен");
+  const catalogueResponse = await fetch(LIS_EXPORT_URL, { signal: AbortSignal.timeout(12_000) });
+  if (!catalogueResponse.ok) throw new Error("Источник цен временно недоступен");
   const items = await catalogueResponse.json() as LisSkinsExportItem[];
-  const cbrRate = parseCbrUsdRate(await ratesResponse.text());
-  const rate = cbrRate ? lisRubRateFromCbr(cbrRate) : null;
-  if (!Array.isArray(items) || !rate) throw new Error("Источник цен вернул некорректные данные");
-  lisCache = { items, rate, expiresAt: Date.now() + 5 * 60 * 1000 };
+  if (!Array.isArray(items)) throw new Error("Источник цен вернул некорректные данные");
+  lisCache = { items, expiresAt: Date.now() + 5 * 60 * 1000 };
   return lisCache;
 }
 
@@ -77,7 +71,8 @@ async function resolvePrice(product: MonitoredProduct) {
     const catalogue = await lisCatalogue();
     const item = findLisSkinsItem(catalogue.items, product.url);
     if (!item?.price || item.price <= 0) throw new Error("Товар не найден в LIS-SKINS");
-    const price = rubPriceFromUsd(item.price, catalogue.rate);
+    const rate = await resolveLisSkinsRubRate(item.url);
+    const price = rubPriceFromUsd(item.price, rate.value);
     return { price, sourcePrice: price };
   }
   const url = new URL(product.url);

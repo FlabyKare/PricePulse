@@ -34,11 +34,14 @@ test("resolves the Titan Katowice sticker from the LIS-SKINS export", async () =
         },
         {
           name: "★ Butterfly Knife | Gamma Doppler Phase 1 (Factory New)",
-          price: 1951.11,
+          price: 1951.27,
           url: "https://app.lis-skins.com/market/csgo/%E2%98%85-butterfly-knife-gamma-doppler-phase-1-factory-new/",
           count: 59,
         },
       ]);
+    }
+    if (url.includes("lis-skins.com/market/csgo/")) {
+      return new Response('<html><body><div>USD Dollar $1.00</div><div>RUB Ruble ₽87.59</div></body></html>');
     }
     if (url.includes("XML_daily.asp")) {
       return new Response('<ValCurs><Valute><CharCode>AUD</CharCode><VunitRate>59,2471</VunitRate></Valute><Valute><CharCode>USD</CharCode><VunitRate>84,2569</VunitRate></Valute></ValCurs>');
@@ -63,8 +66,8 @@ test("resolves the Titan Katowice sticker from the LIS-SKINS export", async () =
     assert.equal(response.status, 200);
     assert.equal(body.name, "Sticker | Titan (Holo) | Katowice 2014");
     assert.equal(body.priceUsd, 74445.64);
-    assert.equal(body.exchangeRate, 87.8);
-    assert.equal(body.priceRub, 6536327.19);
+    assert.equal(body.exchangeRate, 87.59);
+    assert.equal(body.priceRub, 6520693.61);
     assert.equal(body.count, 1);
     assert.equal(body.imageUrl, "https://community.steamstatic.com/economy/image/test-preview");
     const resolve = async (url) => {
@@ -79,10 +82,10 @@ test("resolves the Titan Katowice sticker from the LIS-SKINS export", async () =
 
     const freehand = await resolve("https://lis-skins.com/market/csgo/%E2%98%85-butterfly-knife-freehand-minimal-wear/");
     const gamma = await resolve("https://lis-skins.com/market/csgo/%E2%98%85-butterfly-knife-gamma-doppler-phase-1-factory-new/");
-    assert.equal(freehand.priceRub, 53423.67);
-    assert.equal(gamma.priceRub, 171307.46);
-    assert.equal(freehand.exchangeRate, 87.8);
-    assert.equal(gamma.exchangeRate, 87.8);
+    assert.equal(freehand.priceRub, 53295.89);
+    assert.equal(gamma.priceRub, 170911.74);
+    assert.equal(freehand.exchangeRate, 87.59);
+    assert.equal(gamma.exchangeRate, 87.59);
   } finally {
     globalThis.fetch = originalFetch;
   }

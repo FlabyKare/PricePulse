@@ -1,4 +1,5 @@
 import { requirePrivateTelegramAccess } from "@/lib/private-access";
+import { verifiedBotToken } from "@/lib/bot-auth";
 import { imageFromPage, parseMarketplaceArticle, resolveMarketplaceArticle, resolveStoreProduct } from "@/lib/store-product";
 import { dnsRegionByCode } from "@/lib/dns-regions";
 
@@ -82,7 +83,7 @@ async function getCatalogue() {
 
 export async function POST(request: Request) {
   const accessDenied = await requirePrivateTelegramAccess(request);
-  if (accessDenied) return accessDenied;
+  if (accessDenied && !await verifiedBotToken(request)) return accessDenied;
   let body: { input?: unknown; url?: unknown; name?: unknown; region?: unknown };
   try { body = await request.json() as typeof body; }
   catch { return Response.json({ error: "Передайте ссылку или артикул товара" }, { status: 400 }); }

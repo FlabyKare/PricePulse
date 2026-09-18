@@ -66,7 +66,12 @@ function validatedState(payload: ProfileStatePayload) {
   if (productsJson.length + collectionsJson.length + paletteJson.length > MAX_STATE_BYTES) {
     throw new Error("Профиль превысил допустимый размер");
   }
-  return { productsJson, collectionsJson, paletteJson, currency, revision, deletedProductIds };
+  return { productsJson, collectionsJson, paletteJson, currency, revision, deletedProductIds, deletedProductIdsJson: JSON.stringify(deletedProductIds) };
+}
+
+function storedDeletedIds(stored: typeof profileStates.$inferSelect) {
+  const parsed = parseJson<unknown>(stored.deletedProductIdsJson, []);
+  return Array.isArray(parsed) ? parsed.filter((id): id is number => Number.isSafeInteger(id) && id > 0) : [];
 }
 
 function productIds(products: unknown) {
@@ -86,7 +91,7 @@ function mergedConflictingState(
   const productsJson = JSON.stringify(mergeProfileRecords(
     parseJson<unknown[]>(stored.productsJson, []),
     payload.products as unknown[],
-    incoming.deletedProductIds,
+    [...storedDeletedIds(stored), ...incoming.deletedProductIds],
   ));
   const collectionsJson = JSON.stringify(mergeProfileRecords(
     parseJson<unknown[]>(stored.collectionsJson, []),
@@ -95,7 +100,8 @@ function mergedConflictingState(
   if (productsJson.length + collectionsJson.length + incoming.paletteJson.length > MAX_STATE_BYTES) {
     throw new Error("Профиль превысил допустимый размер");
   }
-  return { ...incoming, productsJson, collectionsJson, revision: stored.revision };
+  const deletedProductIdsJson = JSON.stringify([...new Set([...storedDeletedIds(stored), ...incoming.deletedProductIds])].slice(-500));
+  return { ...incoming, productsJson, collectionsJson, deletedProductIdsJson, revision: stored.revision };
 }
 
 async function upsertTelegramUser(user: NonNullable<Awaited<ReturnType<typeof authenticateTelegramRequest>>["user"]>) {
@@ -171,6 +177,7 @@ export async function PUT(request: Request) {
         const [created] = await db.insert(profileStates).values({
           userId: auth.user.id,
           productsJson: state.productsJson,
+          deletedProductIdsJson: state.deletedProductIdsJson,
           collectionsJson: state.collectionsJson,
           paletteJson: state.paletteJson,
           currency: state.currency,
@@ -186,10 +193,16 @@ export async function PUT(request: Request) {
       }
     }
 
-    const merged = stored.revision !== state.revision;
+    let merged = stored.revision !== state.revision;
     if (merged) {
       state = mergedConflictingState(stored, state, payload);
     } else {
+      const filteredProducts = mergeProfileRecords([], payload.products as unknown[], storedDeletedIds(stored));
+      if (filteredProducts.length !== (payload.products as unknown[]).length) {
+        state.productsJson = JSON.stringify(filteredProducts);
+        merged = true;
+      }
+      state.deletedProductIdsJson = JSON.stringify([...new Set([...storedDeletedIds(stored), ...state.deletedProductIds])].slice(-500));
       const storedProductIds = productIds(parseJson(stored.productsJson, []));
       const nextProductIds = productIds(payload.products);
       const allowedDeletions = new Set(state.deletedProductIds);
@@ -201,6 +214,7 @@ export async function PUT(request: Request) {
 
     const [saved] = await db.update(profileStates).set({
       productsJson: state.productsJson,
+      deletedProductIdsJson: state.deletedProductIdsJson,
       collectionsJson: state.collectionsJson,
       paletteJson: state.paletteJson,
       currency: state.currency,

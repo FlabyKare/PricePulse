@@ -1,4 +1,5 @@
 import { requirePrivateTelegramAccess } from "@/lib/private-access";
+import { verifiedBotToken } from "@/lib/bot-auth";
 import { containsSensitiveIdentifier } from "@/lib/privacy";
 
 type RuntimeEnv = { OPENROUTER_API_KEY?: string; OPENROUTER_MODEL?: string; WEBAPP_URL?: string };
@@ -783,7 +784,7 @@ function publicCandidate(candidate: Candidate) {
 
 export async function POST(request: Request) {
   const accessDenied = await requirePrivateTelegramAccess(request);
-  if (accessDenied) return accessDenied;
+  if (accessDenied && !await verifiedBotToken(request)) return accessDenied;
   let body: { query?: unknown; externalSearchConsent?: unknown };
   try {
     body = await request.json() as typeof body;

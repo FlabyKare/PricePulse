@@ -18,6 +18,7 @@ export const profileStates = sqliteTable("profile_states", {
     .primaryKey()
     .references(() => telegramUsers.id, { onDelete: "cascade" }),
   productsJson: text("products_json").notNull().default("[]"),
+  deletedProductIdsJson: text("deleted_product_ids_json").notNull().default("[]"),
   collectionsJson: text("collections_json").notNull().default("[]"),
   paletteJson: text("palette_json").notNull().default("{}"),
   currency: text("currency").notNull().default("RUB"),

@@ -1,0 +1,1 @@
+ALTER TABLE `profile_states` ADD `deleted_product_ids_json` text DEFAULT '[]' NOT NULL;

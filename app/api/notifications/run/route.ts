@@ -1,6 +1,7 @@
 import { and, eq, sql } from "drizzle-orm";
 import { env } from "cloudflare:workers";
 import { getDb } from "@/db";
+import { verifiedBotToken } from "@/lib/bot-auth";
 import { profileStates } from "@/db/schema";
 import { findLisSkinsItem, isLisSkinsUrl, resolveLisSkinsRubRate, rubPriceFromUsd, type LisSkinsExportItem } from "@/lib/lis-skins";
 import { resolveStoreProduct } from "@/lib/store-product";
@@ -35,25 +36,6 @@ function escapeHtml(value: string) {
 
 function formatRub(value: number) {
   return `${Math.round(value).toLocaleString("ru-RU")} ₽`;
-}
-
-async function verifiedMonitorToken(request: Request, runtime: RuntimeEnv) {
-  const authorization = request.headers.get("authorization") ?? "";
-  const presented = authorization.startsWith("Bearer ") ? authorization.slice(7).trim() : "";
-  if (!presented) return null;
-  const configuredToken = runtime.BOT_TOKEN?.trim();
-  if (configuredToken) return presented === configuredToken ? presented : null;
-  const configuredBotId = runtime.TELEGRAM_BOT_ID?.trim();
-  if (!configuredBotId) return null;
-  try {
-    const response = await fetch(`https://api.telegram.org/bot${presented}/getMe`, {
-      signal: AbortSignal.timeout(8_000),
-    });
-    const body = await response.json() as { ok?: boolean; result?: { id?: string | number } };
-    return response.ok && body.ok && String(body.result?.id ?? "") === configuredBotId ? presented : null;
-  } catch {
-    return null;
-  }
 }
 
 async function lisCatalogue() {
@@ -125,7 +107,7 @@ export async function POST(request: Request) {
   if (!runtime.BOT_TOKEN?.trim() && !runtime.TELEGRAM_BOT_ID?.trim()) {
     return Response.json({ error: "Telegram-бот не настроен" }, { status: 503 });
   }
-  const token = await verifiedMonitorToken(request, runtime);
+  const token = await verifiedBotToken(request);
   if (!token) return Response.json({ error: "Недостаточно прав" }, { status: 401 });
 
   const db = getDb();

@@ -16,7 +16,7 @@ Telegram Mini App и Railway-бот для мониторинга цен.
 - локальная копия данных как резерв при временной потере связи;
 - опциональный OpenRouter-провайдер для AI-подборок;
 - адаптация под мобильный Telegram WebView;
-- Telegram-команды `/start`, `/app` и `/help`;
+- Telegram-команды `/add`, `/list`, `/find`, `/search`, `/check`, `/history`, `/interval`, `/alert`, `/delete`, `/agree`, `/start`, `/app` и `/help`;
 - кнопка запуска Mini App из сообщения бота;
 - Railway worker с long polling и автоматическим перезапуском.
 
@@ -56,7 +56,9 @@ OPENROUTER_MODEL=openrouter/auto
 [bot] @price_pulce_bot connected
 ```
 
-Если Railway следит за веткой `main`, сначала объедините рабочий PR с `main` либо переключите Source Branch на `codex/ideas-themes`.
+Для первого добавления из чата отправьте `/agree` — это подключает тот же облачный профиль по Telegram ID, который использует Mini App. Примеры: `/add https://...`, `/add WB 123456789`, `/add ссылка | 4500` для ручной цены, `/alert ID 5000` или `/alert ID 10%`. `/list` показывает ID карточек. Команда `/search запрос` отправляет текст внешнему поиску только после отдельного подтверждения кнопкой.
+
+Если Railway следит за веткой `main`, публикация нового коммита в ней запускает обновление бота при включённом автодеплое.
 
 ## Память и безопасность
 

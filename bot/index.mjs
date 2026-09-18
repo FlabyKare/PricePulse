@@ -3,6 +3,7 @@ import {
   TelegramClient,
   handleUpdate,
   normalizeWebAppUrl,
+  runBotAction,
   runPriceMonitor,
 } from "./telegram.mjs";
 
@@ -17,6 +18,7 @@ if (!token) {
 }
 
 const client = new TelegramClient({ token });
+const runAction = (userId) => (action, payload) => runBotAction({ token, webAppUrl, userId, action, payload });
 let stopping = false;
 let activeRequest;
 
@@ -37,9 +39,20 @@ async function run() {
 
   await client.call("deleteWebhook", { drop_pending_updates: false });
   await client.call("setMyCommands", {
+    scope: { type: "all_private_chats" },
     commands: [
       { command: "start", description: "Запустить PricePulse" },
       { command: "app", description: "Открыть приложение" },
+      { command: "add", description: "Добавить товар по ссылке или артикулу" },
+      { command: "list", description: "Мои товары" },
+      { command: "find", description: "Найти среди моих товаров" },
+      { command: "search", description: "Найти товар в магазинах" },
+      { command: "check", description: "Проверить цену товара" },
+      { command: "history", description: "История замеров цены" },
+      { command: "interval", description: "Период проверки цены" },
+      { command: "alert", description: "Настроить порог уведомления" },
+      { command: "delete", description: "Удалить товар" },
+      { command: "agree", description: "Подключить облачный профиль" },
       { command: "help", description: "Помощь" },
     ],
   });
@@ -72,7 +85,7 @@ async function run() {
         {
           offset,
           timeout: pollingTimeout,
-          allowed_updates: ["message"],
+          allowed_updates: ["message", "callback_query"],
         },
         { signal: activeRequest.signal },
       );
@@ -82,7 +95,8 @@ async function run() {
       for (const update of updates) {
         offset = Math.max(offset, update.update_id + 1);
         try {
-          await handleUpdate({ client, update, webAppUrl });
+          const userId = update.message?.from?.id ?? update.callback_query?.from?.id;
+          await handleUpdate({ client, update, webAppUrl, runAction: runAction(userId) });
         } catch (error) {
           console.error(`[bot] update ${update.update_id} failed: ${error.message}`);
         }
